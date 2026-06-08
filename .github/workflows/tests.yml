@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Python 3 stdlib only — no dependencies to install.
+      - name: Byte-compile the scripts
+        run: |
+          python -m py_compile \
+            skills/repo-analyst/scripts/*.py \
+            skills/repo-wiki-planner/scripts/*.py \
+            skills/repo-orient/scripts/*.py
+      - name: Run the test suite
+        run: python -m unittest discover -s tests -v

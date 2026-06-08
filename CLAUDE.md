@@ -229,22 +229,24 @@ resolved than this.
   8/8 router links resolved on the Go re-dogfood.
 - ~~Overkill tax~~ — FIXED; forge scales the set to repo size (proven: selected
   all 5 for the 91-package Go repo; skips `add-domain`/`scaffold` on small flat repos).
-- ~~No tests~~ — `tests/` suite added (27 green), incl. an assembler regression
-  guard that locks in the dead-link / empty-entity / name fixes.
+- ~~No tests~~ — `tests/` suite (now 44): script behavior + assembler regression
+  guard + frontmatter validity + merge safety + brain probe.
+- ~~No CI~~ — GitHub Actions runs the suite + `py_compile` on push/PR across
+  Python 3.10–3.12 (stdlib only, no deps).
 
 **Open:**
-1. **No CI.** The suite exists; nothing runs it on push yet.
-2. **The wiki ">8 articles → confirm with user" gate can't work in an autonomous /
+1. **The wiki ">8 articles → confirm with user" gate can't work in an autonomous /
    batch run** — the agent has to judge the trim itself. Make the cap deterministic
    or detect non-interactive mode.
-3. **The brain path was A/B-tested against a live brain — and demoted to opt-in
-   enricher.** Brain as a *substitute* analysis source was measurably worse on
-   a Node repo (stale index of a deleted docs/ADR tree, duplicate +
-   cross-repo chunks, missed the two highest-value gotchas the lenses caught).
-   Design now: lenses always run (source of truth); brain only *adds* rationale on
-   opt-in `--enrich-from-brain`. The enrichment-append flow still wants a full
-   live-brain dogfood; the lens floor is proven.
-4. **Strategic overlap with wicked-brain — RESOLVED.** Brain is an opt-in
+2. **`--enrich-from-brain` works, but its value is gated by wicked-brain itself.**
+   The append flow is certified against a live brain (append-only, lens bytes
+   preserved, manifests untouched, genuine rationale — all PASS) and proved
+   genuinely useful where ADRs are deleted from HEAD. Two wicked-brain-side limits
+   remain: (a) the brain server can crash on startup here (EMFILE in its
+   file-watcher) → the flow correctly falls through to lens-only; (b) the index
+   can be stale / cross-repo-polluted, so rationale needs filtering. Both are
+   brain hygiene, not flow bugs; lenses stay the floor.
+3. **Strategic overlap with wicked-brain — RESOLVED.** Brain is an opt-in
    build-time *enricher* (supplementary rationale the lenses can't see), not a
    competitor and not an equal source. The lens floor is the source of truth.
 
