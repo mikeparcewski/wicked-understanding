@@ -124,9 +124,11 @@ see, in a separate marked section — it never replaces a lens artifact or
 overrides a lens fact. Brain is never a runtime dependency; the output is the
 same self-contained, cross-CLI `npx skills` package either way.
 
-An A/B against a live brain settled this: brain as a *substitute* source was
-worse — it served a stale, since-deleted docs/ADR tree and missed the sharpest
-gotchas the lenses caught — so the lenses stay the floor and brain stays additive.
+Why lenses are the floor: they read HEAD, so they're current *by construction* —
+there's no index to keep in sync. Brain adds a dimension the code alone can't —
+the *why* (ADRs, decisions) — so the two compose: always-current lens analysis,
+plus brain's rationale on top when you want it. Keep brain's index fresh
+(re-ingest after changes) and that rationale only gets better.
 
 ## Typical workflows
 

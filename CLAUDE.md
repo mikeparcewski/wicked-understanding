@@ -84,10 +84,11 @@ that gap is the work. Ship that, not a feature list. Niceness is friction.
   rationale (ADRs, decisions) the lenses can't see, in a separate marked section
   — it never replaces a lens artifact or overrides a lens fact (lens wins on
   conflict; brain may lag HEAD). Brain is NEVER a runtime dependency; output is
-  self-contained and cross-CLI. **Proven by A/B on a Node repo: brain as a
-  substitute source was worse** — it indexed a deleted `docs/`/ADR tree (stale),
-  carried duplicate + cross-repo chunks, and missed the two highest-value gotchas
-  the lenses caught. Do not promote brain to an equal/replacement source.
+  self-contained and cross-CLI. Lenses are the floor because they read HEAD —
+  current *by construction*, with no index to keep in sync — so analysis is never
+  gated on an index being up to date. Brain is a genuine value-add (the *why*:
+  ADRs, decisions the code can't show); keep its index fresh for best results.
+  This is a separation of roles, not a knock on brain.
 
 ---
 
@@ -238,14 +239,14 @@ resolved than this.
 1. **The wiki ">8 articles → confirm with user" gate can't work in an autonomous /
    batch run** — the agent has to judge the trim itself. Make the cap deterministic
    or detect non-interactive mode.
-2. **`--enrich-from-brain` works, but its value is gated by wicked-brain itself.**
-   The append flow is certified against a live brain (append-only, lens bytes
-   preserved, manifests untouched, genuine rationale — all PASS) and proved
-   genuinely useful where ADRs are deleted from HEAD. Two wicked-brain-side limits
-   remain: (a) the brain server can crash on startup here (EMFILE in its
-   file-watcher) → the flow correctly falls through to lens-only; (b) the index
-   can be stale / cross-repo-polluted, so rationale needs filtering. Both are
-   brain hygiene, not flow bugs; lenses stay the floor.
+2. **`--enrich-from-brain` is certified; a *fair* re-test is still owed.** The
+   append flow passed every safety check against a live brain (append-only, lens
+   bytes preserved, manifests untouched, genuine rationale) and folded in real ADR
+   "why." Honest caveat on our own method: that run used a brain index that had
+   NOT been re-ingested at HEAD, so any staleness was ours to fix, not a brain
+   flaw — a fair comparison must refresh the index first, which we haven't done.
+   (Operational note: the brain server can hit EMFILE on startup here; the flow
+   falls through to lens-only, so it's non-blocking.)
 3. **Strategic overlap with wicked-brain — RESOLVED.** Brain is an opt-in
    build-time *enricher* (supplementary rationale the lenses can't see), not a
    competitor and not an equal source. The lens floor is the source of truth.
