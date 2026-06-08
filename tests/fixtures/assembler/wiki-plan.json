@@ -1,0 +1,58 @@
+{
+  "repo": "acme-payments",
+  "stack": "Python / FastAPI",
+  "type": "service",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "articles": [
+    {
+      "type": "product-overview",
+      "slug": "acme-payments-overview",
+      "ref_file": "overview.md",
+      "title": "Product Overview",
+      "audience": "both",
+      "priority": 1,
+      "source_artifacts": ["survey.md", "domain.md"],
+      "subject": ""
+    },
+    {
+      "type": "architecture-overview",
+      "slug": "acme-payments-arch",
+      "ref_file": "arch.md",
+      "title": "Architecture Overview",
+      "audience": "maintainer",
+      "priority": 2,
+      "source_artifacts": ["architecture.md"],
+      "subject": ""
+    },
+    {
+      "type": "api-reference",
+      "slug": "acme-payments-api",
+      "ref_file": "mcp-tools.md",
+      "title": "API Reference",
+      "audience": "user",
+      "priority": 3,
+      "source_artifacts": ["technical.md"],
+      "subject": ""
+    },
+    {
+      "type": "onboarding-maintainer",
+      "slug": "acme-payments-onboard",
+      "ref_file": "onboard.md",
+      "title": "Maintainer Onboarding",
+      "audience": "maintainer",
+      "priority": 4,
+      "source_artifacts": ["ops.md"],
+      "subject": ""
+    },
+    {
+      "type": "capability",
+      "slug": "acme-payments-cap-charge-capture",
+      "ref_file": "cap-charge-capture.md",
+      "title": "Capability: Charge Capture",
+      "audience": "both",
+      "priority": 5,
+      "source_artifacts": ["domain.md"],
+      "subject": "charge capture"
+    }
+  ]
+}

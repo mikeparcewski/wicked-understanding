@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors
+.idea/
+.vscode/
+
+# Generated analysis store (lives in ~/.wicked-understanding/, never in-repo)
+*.viewer.html
