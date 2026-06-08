@@ -87,27 +87,31 @@ what moved is refreshed.
 
 ## Pipeline
 
-```
-[repo path]
-     │
-     ▼
-surveyor ─────────────────────────────────────────── survey.md
-     │
-     ▼  (analyst dispatches one agent per lens, in parallel)
-┌────┴───────────────────────────────────────┐
-│  architect  → architecture.md               │
-│  domain     → domain.md                      │
-│  tech       → technical.md                   │
-│  ops        → ops.md                         │
-└─────────────────────────────────────────────┘
-     │
-     ▼  (analyst dispatches forge + wiki, in parallel)
-┌────┴────────────────────────────────────────────────────────────┐
-│  forge → fix-bug/ add-feature/ …   wiki → wiki/ (router + refs/) │
-│     ↓ both emit into  ~/.wicked-understanding/repos/{key}/skills/ │
-│     ↓ pipeline runs:  npx skills add <that path> --all           │
-│  → installed into your agent CLI(s)   (+ viewer.html on demand)  │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    repo(["any repo"]) --> surveyor["repo-surveyor"]
+    surveyor --> survey[/"survey.md"/]
+    survey --> analyst{{"repo-analyst<br/>diff-aware orchestrator"}}
+
+    analyst -->|"4 lenses, in parallel"| lenses
+    subgraph lenses ["analysis lenses (read HEAD = source of truth)"]
+        direction LR
+        arch["repo-architect"] --> a1[/"architecture.md"/]
+        dom["repo-domain-analyst"] --> a2[/"domain.md"/]
+        tech["repo-tech-analyst"] --> a3[/"technical.md"/]
+        ops["repo-ops-analyst"] --> a4[/"ops.md"/]
+    end
+
+    lenses -->|"forge + wiki, in parallel"| gen
+    subgraph gen ["generate the package"]
+        direction LR
+        forge["repo-skill-forge<br/>task playbooks:<br/>fix-bug, add-feature, …"]
+        wiki["repo-wiki-planner<br/>wiki skill + viewer.html"]
+    end
+
+    gen --> store[("per-repo store<br/>~/.wicked-understanding/…/skills/")]
+    store --> install[["npx skills add … --all"]]
+    install --> cli(["installed into your agent CLIs"])
 ```
 
 ## Analysis backend
