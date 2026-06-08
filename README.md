@@ -48,11 +48,13 @@ effort relearning *how* before it can touch the *what you asked for*.
 Analyze the repo **once** and give the agent the how. Focused lenses read the code
 at HEAD and turn it into repo-specific playbooks the agent loads on demand:
 
-- **The how — task playbooks.** `fix-bug`, `add-feature`, `add-domain`,
-  `write-tests`, `scaffold`, each written for *this* repo: symptom→file triage,
-  the exact step order, the real wiring point ("register it here or it won't
-  boot"), the test command, the trap that causes the 404. The agent *follows* the
-  method instead of guessing at it.
+- **The how — task playbooks.** `fix-bug`, `add-feature`, `verify`,
+  `write-tests`, `add-domain`, `scaffold`, each written for *this* repo:
+  symptom→file triage, the exact step order, the real wiring point ("register it
+  here or it won't boot"), the test command, the trap that causes the 404 — and,
+  with `verify`, what each capability should *observably* do and how to exercise
+  it, so anyone can test the repo without first reading the code. The agent
+  *follows* the method instead of guessing at it.
 - **The why, on demand — a wiki.** An agent-loadable knowledge base + HTML viewer
   for the deeper context a playbook points to when a task needs it.
 - **The router — a `CLAUDE.md` / `AGENTS.md` block.** ~50 always-loaded lines that
@@ -105,7 +107,7 @@ flowchart TD
     lenses -->|"forge + wiki, in parallel"| gen
     subgraph gen ["generate the package"]
         direction LR
-        forge["repo-skill-forge<br/>task playbooks:<br/>fix-bug, add-feature, …"]
+        forge["repo-skill-forge<br/>task playbooks:<br/>fix-bug, add-feature, verify, …"]
         wiki["repo-wiki-planner<br/>wiki skill + viewer.html"]
     end
 
@@ -129,6 +131,23 @@ there's no index to keep in sync. Brain adds a dimension the code alone can't �
 the *why* (ADRs, decisions) — so the two compose: always-current lens analysis,
 plus brain's rationale on top when you want it. Keep brain's index fresh
 (re-ingest after changes) and that rationale only gets better.
+
+## Standalone by design — composes, doesn't depend
+
+This is the **knowledge layer**. It analyzes a repo and emits the repo-specific
+*how* — including how to *verify* it: the `verify` playbook gives each capability's
+observable "works when", the real gate sequence, and a concrete definition of done,
+so anyone (or any agent) can test the repo without first reading it.
+
+It stops at knowledge. *Running* those gates and driving a change to ship is
+**orchestration** — a different job. Because the output is structured (observable
+signals, real commands, a checkable definition of done), an orchestrator can pick it
+up: point a delivery system (e.g. wicked-garden) at this knowledge and it has the
+per-repo gates to drive; reach for an acceptance harness (e.g. wicked-testing) when
+you want independent verdict rigor. None of that is required — **the generated skills
+carry zero references to other tools** and run self-contained in any CLI. Knowledge
+flows up to whatever orchestrates; it never reaches sideways. Same no-lock-in promise
+as the rest of the output.
 
 ## Typical workflows
 

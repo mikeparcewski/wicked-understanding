@@ -1,13 +1,13 @@
 ---
 name: repo-skill-forge
 description: >
-  Generate task-oriented workflow skills for a codebase into the per-repo store and install them via npx skills add. Produces fix-bug, add-feature, add-domain, write-tests, and scaffold skills — each tailored to this repo's specific patterns, file paths, and conventions. Skills progressively load deeper context from the wiki refs as the agent needs it. Trigger on: "build the skills", "generate the workflow skills", "make the dev skills", "forge the skills", or after repo-analyst completes analysis.
+  Generate task-oriented workflow skills for a codebase into the per-repo store and install them via npx skills add. Produces fix-bug, add-feature, verify, write-tests, add-domain, and scaffold skills — each tailored to this repo's specific patterns, file paths, and conventions. The verify skill describes what each capability should observably do and how to prove it, so anyone can test the repo without reading the code. Skills progressively load deeper context from the wiki refs as the agent needs it. Trigger on: "build the skills", "generate the workflow skills", "make the dev skills", "forge the skills", or after repo-analyst completes analysis.
 ---
 
 # repo-skill-forge
 
-Generates four task-oriented workflow skills, each scoped to one common
-agent path, plus a scaffolding skill. All read from the analysis artifacts
+Generates a set of task-oriented workflow skills, each scoped to one common
+agent path and scaled to the repo's size. All read from the analysis artifacts
 in `~/.wicked-understanding/`, write into the per-repo store under
 `$ARTIFACTS_DIR/skills/`, then install via `npx skills add`.
 
@@ -19,6 +19,7 @@ in `~/.wicked-understanding/`, write into the per-repo store under
 |---|---|---|
 | `fix-bug` | Investigating or fixing a bug | Triage table, error chain, test commands, common sources |
 | `add-feature` | Adding new functionality | Implementation steps, conventions, wiring guide |
+| `verify` | Confirming a change works / deciding if it's done | What each capability should observably do + how to exercise it, the gate sequence, definition of done |
 | `add-domain` | Adding a new entity/domain/bounded context | Domain checklist, migration commands, entity template |
 | `write-tests` | Writing or fixing tests | Framework patterns, fixture setup, what to test |
 | `scaffold` | Starting a new component from scratch | File templates, naming conventions, DI registration |
@@ -39,12 +40,14 @@ doesn't have, so they produce filler.
 |---|---|
 | `fix-bug` | Always — dogfood-proven keeper |
 | `add-feature` | Always — dogfood-proven keeper |
+| `verify` | Always — every repo benefits from "what correct looks like" + a gate sequence; for a stranger picking it up, this is the test map. Only skip if the repo has zero discernible operations AND no run/test commands (then note the gap). |
 | `write-tests` | Repo has a test suite, or is medium+ (~100+ files) |
 | `add-domain` | Larger / multi-module / multi-domain repo where adding a new entity or bounded context is a real recurring task |
 | `scaffold` | Larger / multi-module repo where new-component scaffolding recurs |
 
-If the survey is ambiguous on size, default to the always-two plus `write-tests`
-when any tests exist. Note in your output which skills you skipped and why.
+If the survey is ambiguous on size, default to the always-three (`fix-bug`,
+`add-feature`, `verify`) plus `write-tests` when any tests exist. Note in your
+output which skills you skipped and why.
 
 ---
 
@@ -113,13 +116,13 @@ Obey every quality check in the template's section. Under 150 lines. Zero
 placeholders — if an artifact section is thin, note the gap and lower confidence.
 ```
 
-Skills to dispatch: the subset chosen by the scaling rule (always `fix-bug` +
-`add-feature`; `write-tests`, `add-domain`, `scaffold` per repo size).
+Skills to dispatch: the subset chosen by the scaling rule (always `fix-bug`,
+`add-feature`, `verify`; `write-tests`, `add-domain`, `scaffold` per repo size).
 
 ### Sequential fallback (single-threaded host)
 
-Generate the selected subset in order `fix-bug` → `add-feature` → `add-domain` → `write-tests`
-→ `scaffold`, following the same brief for each.
+Generate the selected subset in order `fix-bug` → `add-feature` → `verify` → `write-tests`
+→ `add-domain` → `scaffold`, following the same brief for each.
 
 ---
 
@@ -197,6 +200,7 @@ via `npx skills add "$ARTIFACTS_DIR/skills" --all`:
   $ARTIFACTS_DIR/skills/
     ├── {repo-slug}-fix-bug/SKILL.md
     ├── {repo-slug}-add-feature/SKILL.md
+    ├── {repo-slug}-verify/SKILL.md
     └── {repo-slug}-{write-tests, add-domain, scaffold — only those generated}/SKILL.md
 
 State which skills were skipped and why (e.g. "skipped add-domain + scaffold:

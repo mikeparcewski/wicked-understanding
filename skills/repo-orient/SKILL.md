@@ -66,6 +66,7 @@ Author the block body (no markers — the script adds them) with:
    |---|---|
    | Fixing a bug | `{repo-slug}-fix-bug` |
    | Adding a feature | `{repo-slug}-add-feature` |
+   | Verifying a change / is it done? | `{repo-slug}-verify` |
    | Understanding the architecture | `{repo-slug}-wiki` → `refs/arch.md` |
    | Understanding the domain | `{repo-slug}-wiki` → `refs/domain.md` |
    ```

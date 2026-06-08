@@ -53,9 +53,10 @@ section, follow the survey and drop or rewrite the section.
 2. [add-feature](#add-feature)
 3. [add-domain](#add-domain)
 4. [write-tests](#write-tests)
-5. [scaffold](#scaffold)
-6. [Shared: "Load for deeper context" table](#shared-load-for-deeper-context)
-7. [Shared: description formula](#shared-description-formula)
+5. [verify](#verify)
+6. [scaffold](#scaffold)
+7. [Shared: "Load for deeper context" table](#shared-load-for-deeper-context)
+8. [Shared: description formula](#shared-description-formula)
 
 ---
 
@@ -510,6 +511,170 @@ From domain analysis — these are the invariants:
 - [ ] Factory/mock examples come from real code in the repo
 - [ ] Domain rules list comes from domain.md verbatim (not invented)
 - [ ] Layer test table references real existing test files
+
+---
+
+## verify
+
+**When it fires**: agent (or a person) is confirming a change actually works,
+deciding whether work is "done", reviewing/accepting a change, or picking up an
+unfamiliar capability and needing to test it.
+
+**Not** `write-tests`. That skill is *how to author a test* (framework, fixtures,
+where files go). This skill is *what correct behavior looks like and how to prove
+it* — the behavioral spec plus the gate sequence. They cross-reference; they don't
+overlap.
+
+**Always-in-context goal**: a tester who has **never read the implementation** can
+name what each capability should observably do, exercise it by hand, run the right
+gates in order, and apply a concrete definition of done. This is the skill that
+turns "the code" into "behavior anyone can verify."
+
+**Boundary — this is knowledge, not a runner.** It describes what to check and how
+to exercise it so *any* consumer (a person, an agent, or a delivery orchestrator)
+can verify. It must **not** name or depend on an external acceptance/orchestration
+tool — the repo's own test framework (the real `pytest`/`go test`/`cargo test`) is
+fine; a sibling product is not. That keeps the generated package self-contained.
+
+### Content sources
+
+| Section | Source artifact | Source section |
+|---|---|---|
+| Capability table ("what it does / works when") | `domain.md` | Core Operations (+ "Using Tests as Specifications") |
+| Exercise it by hand | `ops.md` + `domain.md` | Run/serve/build commands + operation entry points |
+| Gate sequence | `ops.md` + `technical.md` | Daily Development Commands + Testing Patterns |
+| Definition of done | `technical.md` + `ops.md` | Testing Patterns + Conventions (synthesis) |
+| Invariants that must hold | `domain.md` | Domain Rules & Invariants |
+| Where verification is unreliable | `technical.md` + `ops.md` | Non-Obvious Technical Details / Gotchas + Common Issues |
+
+### Generated SKILL.md structure
+
+```markdown
+---
+name: {repo-slug}-verify
+description: >
+  Verification playbook for {repo-name} — a {type} built with {stack}.
+  Use when confirming a change works, deciding whether work is "done", or
+  picking up an unfamiliar part of this repo and needing to test it.
+  Covers: what each capability should observably do and how to exercise it
+  ({the repo's real entry points — HTTP endpoints / CLI commands / public fns}),
+  the gate sequence ({the repo's real checks — e.g. {lint} → {types} → {test}}),
+  and the definition of done. Load before verifying or accepting any change.
+---
+
+# {repo-name} — Verify It Works
+
+Describes WHAT correct behavior looks like and HOW to confirm it, so anyone — or
+any agent — can verify a change **without having read the implementation**. It
+describes the checks; it does not run them for you.
+
+## What it does — and how you'd know it works
+
+One row per real capability: the observable signal that it's working, and how to
+exercise it. **Rows come from domain.md "Core Operations". The "Exercise it by"
+column uses THIS repo's real entry point — an HTTP request for a service, a
+command for a CLI, a function call for a library. The "Works when" cell must be
+something a tester can actually observe (a 200 + body shape, an exit code +
+stdout, a return value, a row written) — never the words "it works".**
+
+**If a capability only *completes* via an out-of-band actor — an agent in the
+loop, a background worker, an async job, an external service — do NOT claim it's
+verifiable end-to-end over the direct interface. Tag the row, and split the check:
+the observable *handoff* a tester CAN confirm directly (a request file written, an
+event/SSE frame emitted, a job enqueued) vs the final state that needs the actor.
+Claiming "works when…" for a half the tester can't reach is the trap this avoids.**
+
+| Capability | Works when… (observable) | Exercise it by… | Watch out for |
+|---|---|---|---|
+| {operation} | {observable success signal} | {`POST /x` + body / `bin sub --flag` / `fn(args)`} | {edge case / failure mode} |
+| … | … | … | … |
+
+## Exercise it by hand
+
+The fastest way for someone new to confirm the system is alive and behaving.
+**Use the repo's real run command (ops.md) + one representative entry point
+(domain.md). Omit the serve step for a library — show a direct call instead.**
+
+```bash
+{run / serve / build command from ops.md}
+# then, for one representative capability:
+{curl the endpoint / invoke the CLI / call the function}
+# expect: {the observable success condition from the table above}
+```
+
+## Gate sequence — run before calling a change done
+
+In order; each is a gate. **Include only the gates this repo actually has —
+derive commands from ops.md + technical.md. Do not invent a typecheck step for an
+untyped repo or an e2e suite that doesn't exist; drop the row instead. Gates may
+be conditional — some repos run one only when a certain area changed (coverage if
+code changed; a browser/e2e suite only if the UI or a route changed). If so, note
+the trigger in the row; don't imply every gate runs on every change. If no
+artifact states a gate's trigger condition, derive it from what the gate
+exercises (a browser/e2e gate → UI/route changes; a coverage gate → code changes)
+and mark it *inferred* — so two operators reach the same answer instead of one
+marking it "always".**
+
+| # | Gate | Command | Passing looks like |
+|---|---|---|---|
+| 1 | {Lint} | {lint-cmd} | {0 problems} |
+| 2 | {Types} | {typecheck-cmd} | {clean — omit row if untyped} |
+| 3 | {Unit} | {test-unit} | {N passed, 0 failed} |
+| 4 | {Integration / e2e} | {cmd} | {…} (omit if none) |
+
+## Definition of done
+
+A change in {repo-name} is verifiably complete when:
+
+- [ ] The gates triggered by this change pass — every always-on gate, plus any conditional gate whose trigger this change hit ({name the real set + each conditional gate's trigger})
+- [ ] The affected capability's "works when" condition holds — via an existing test or by exercising it (above); for an out-of-band/agent-completed capability, the handoff is observed and the actor confirmed it landed
+- [ ] The invariants it touches still hold (below)
+- [ ] {repo-specific — new behavior has a test / no skipped or xfail tests / {the repo's coverage rule if it has one}}
+
+## Invariants that must stay true
+
+Rules the system must never violate — confirm these still hold after a change.
+**From domain.md "Domain Rules & Invariants" — verbatim, not invented.**
+
+- {invariant} — check by {how}
+- …
+
+## Where verification is unreliable
+
+Honest caveats so a tester isn't surprised. **From technical.md gotchas + ops.md.
+If none are known, say "No known flaky areas" — don't invent one.**
+
+- {flaky / time-dependent / needs-external-dep area} — {how to handle: seed, mock, skip locally}
+
+## Load for deeper context
+
+(see Shared section below)
+```
+
+### Quality checks
+
+- [ ] Capability table has one row per real Core Operation in domain.md; every
+      "Works when" cell is observable (status / exit code / return value / state
+      change), never "it works"
+- [ ] "Exercise it by" uses the repo's real entry-point shape (HTTP / CLI / fn) —
+      no invented endpoints or commands
+- [ ] Any capability completed only by an out-of-band actor (agent / worker /
+      async job / external service) is tagged, with its check split into the
+      directly-observable handoff vs the actor-completed final state — never
+      claimed verifiable end-to-end over the direct interface
+- [ ] Gate sequence lists only gates the repo actually has, with real commands
+      from ops.md — no invented typecheck / e2e step; conditional gates note
+      their trigger and the definition of done gates on the *triggered* set
+- [ ] Definition of done is repo-specific and checkable — concrete enough that an
+      orchestrator could gate on it (not "looks good")
+- [ ] Invariants come from domain.md verbatim (not invented)
+- [ ] Names no tooling beyond what the repo itself uses — in particular no
+      external acceptance/orchestration product (this skill is self-contained
+      repo knowledge any runner can consume)
+- [ ] Under ~150 lines — but up to ~175 is fine when capabilities are tagged
+      out-of-band and the Handoff/Final-state split is the substance (the split is
+      content, not padding); if domain.md has no operations AND ops.md has no
+      test/run commands, say so plainly and lower confidence rather than padding
 
 ---
 

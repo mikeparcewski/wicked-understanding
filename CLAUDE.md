@@ -2,7 +2,7 @@
 
 Portable Agent Skills (installed via `npx skills`): **9 skills that analyze any
 repository** and emit three outputs — **task workflow skills** (`fix-bug`,
-`add-feature`, `add-domain`, `write-tests`, `scaffold`), a **wiki** (agent-loadable
+`add-feature`, `verify`, `write-tests`, `add-domain`, `scaffold`), a **wiki** (agent-loadable
 skill + standalone HTML viewer), and a **merge-safe context doc** (`CLAUDE.md` /
 `AGENTS.md`) that routes agents to them. Analysis is cached in
 `~/.wicked-understanding/repos/{repo-key}/` and refreshed incrementally.
@@ -89,6 +89,18 @@ that gap is the work. Ship that, not a feature list. Niceness is friction.
   gated on an index being up to date. Brain is a genuine value-add (the *why*:
   ADRs, decisions the code can't show); keep its index fresh for best results.
   This is a separation of roles, not a knock on brain.
+- **wicked-understanding emits knowledge; it does not orchestrate or run.** The
+  output describes a repo — including how to *verify* it (the generated `verify`
+  skill: what each capability should observably do, the gate sequence, the
+  definition of done). *Running* those gates, deciding when, and driving delivery
+  is the **consumer's** job — a person, a bare agent following the router, or a
+  delivery orchestrator (e.g. wicked-garden) that reads this knowledge. **Generated
+  artifacts carry ZERO references to sibling tools** (no "now run wicked-testing",
+  no orchestrator hooks) — that's what keeps the package self-contained and
+  cross-CLI. Same rule as brain: no sideways dependencies. The flip side of the
+  contract: the knowledge must be *structured enough* (observable signals, real
+  commands, a checkable DoD) that an orchestrator **can** consume it — but it
+  stays pure description, never control flow.
 
 ---
 
@@ -234,22 +246,37 @@ resolved than this.
   guard + frontmatter validity + merge safety + brain probe.
 - ~~No CI~~ — GitHub Actions runs the suite + `py_compile` on push/PR across
   Python 3.10–3.12 (stdlib only, no deps).
+- ~~Task skills were change-authoring only~~ — FIXED. `verify` added: each
+  capability's observable "works when" + how to exercise it, the gate sequence,
+  and a definition of done — so a stranger can test the repo without reading it.
+  Always-generated; pure knowledge (names no sibling tool). Dogfood-proven on 2
+  stacks (a JS service with agent-in-loop ops; a Go-first CLI/MCP repo):
+  install-clean, repo-specific, no TS bias leakage, handles out-of-band /
+  agent-completed capabilities + conditional gates. Caveat: proven to *generate*
+  correct, artifact-grounded output; the generated gate commands weren't executed
+  against live checkouts.
+- ~~`--enrich-from-brain` fair re-test owed~~ — DONE; it corrects an earlier
+  unfair call. A fresh, clean HEAD-index ingest of the public dogfood repo (105
+  chunks, 0 cross-repo, 0 stale, same commit as the lens baseline) shows brain
+  **redundant with the lenses on that repo** — only because the repo keeps its
+  rationale as inline `(ADR-00NN)` comment tags with **no ADR docs in HEAD**, so
+  the *why* (rejected options, trade-offs) reaches *neither* source. A repo
+  characteristic, not a brain flaw; it reframes the earlier "brain looked thin"
+  (stale-index misattribution) into "the rationale was never in HEAD." Brain's
+  value is **proven where rationale is committed**: a brain fed real ADR docs
+  surfaces Options-Considered / Trade-offs / council risk the HEAD-reading lenses
+  provably can't. EMFILE startup crash is worked around with `ulimit -n 8192`
+  (the fresh ingest ran on the live server end-to-end, no fallback needed).
 
 **Open:**
 1. **The wiki ">8 articles → confirm with user" gate can't work in an autonomous /
    batch run** — the agent has to judge the trim itself. Make the cap deterministic
    or detect non-interactive mode.
-2. **`--enrich-from-brain` is certified; a *fair* re-test is still owed.** The
-   append flow passed every safety check against a live brain (append-only, lens
-   bytes preserved, manifests untouched, genuine rationale) and folded in real ADR
-   "why." Honest caveat on our own method: that run used a brain index that had
-   NOT been re-ingested at HEAD, so any staleness was ours to fix, not a brain
-   flaw — a fair comparison must refresh the index first, which we haven't done.
-   (Operational note: the brain server can hit EMFILE on startup here; the flow
-   falls through to lens-only, so it's non-blocking.)
-3. **Strategic overlap with wicked-brain — RESOLVED.** Brain is an opt-in
+2. **Strategic overlap with wicked-brain — RESOLVED.** Brain is an opt-in
    build-time *enricher* (supplementary rationale the lenses can't see), not a
    competitor and not an equal source. The lens floor is the source of truth.
+   (The fair re-test under *Resolved* above is the evidence: brain's *why* is real
+   net-new value wherever the rationale is actually committed.)
 
 ---
 
