@@ -1,32 +1,68 @@
-# wicked-understanding
-
-A set of composable [Agent Skills](https://agentskills.io) that analyze any
-codebase and produce three deliverables:
-
-- **Task-oriented workflow skills** — `fix-bug`, `add-feature`, `add-domain`,
-  `write-tests`, `scaffold` — emitted as an `npx skills`-installable package and
-  installed into your agent CLI(s) automatically. These are the primary output.
-- **A wiki** — an agent-loadable wiki skill plus a standalone HTML viewer —
-  the deep-knowledge backing store the task skills load on demand.
-- **An agent context doc** — a merge-safe `CLAUDE.md` / `AGENTS.md` block that
-  orients every session in ~50 lines and routes to the skills + wiki above,
-  instead of re-exploring the codebase. The always-in-context keystone.
-
-Analysis is cached once in `~/.wicked-understanding/repos/{repo-key}/` and
-regenerated incrementally; only lenses whose watched files changed re-run.
-
-## Install
-
-Portable across agent CLIs — install with the `skills` CLI (no Claude-specific
-plugin manifest; the repo is just skill folders under `skills/`):
-
-```bash
-npx skills add <owner>/wicked-understanding --all        # all 9 skills
-npx skills add <owner>/wicked-understanding --skill repo-analyst   # just one
+```
+          _      _            _                       _               _                  _ _
+__      _(_) ___| | _____  __| |      _   _ _ __   __| | ___ _ __ ___| |_ __ _ _ __   __| (_)_ __   __ _
+\ \ /\ / / |/ __| |/ / _ \/ _` |_____| | | | '_ \ / _` |/ _ \ '__/ __| __/ _` | '_ \ / _` | | '_ \ / _` |
+ \ V  V /| | (__|   <  __/ (_| |_____| |_| | | | | (_| |  __/ |  \__ \ || (_| | | | | (_| | | | | | (_| |
+  \_/\_/ |_|\___|_|\_\___|\__,_|      \__,_|_| |_|\__,_|\___|_|  |___/\__\__,_|_| |_|\__,_|_|_| |_|\__, |
+                                                                                                   |___/
 ```
 
-Replace `<owner>` with the published repo path. The **generated** per-repo
-skills (below) install the same way — the pipeline runs `npx skills add` for you.
+**Turn any repo into installable agent skills + a routing `CLAUDE.md`.** Your
+agent CLI wakes up oriented in ~50 curated lines instead of re-reading the whole
+codebase every session. No server. No embeddings. No lock-in.
+
+```bash
+npx skills add mikeparcewski/wicked-understanding --all
+```
+
+(`--skill repo-analyst` installs just one; the per-repo skills it *generates*
+install the same way — the pipeline runs `npx skills add` for you.)
+
+Works with **Claude Code**, **Gemini CLI**, **Cursor**, **Codex**, and **Copilot
+CLI** — anything the [`skills`](https://agentskills.io) standard targets. Dogfooded
+on four real repos: Python, Node, a large TypeScript monorepo, and Go.
+
+---
+
+## The problem
+
+Every session, your agent wakes up blank and rediscovers the same repository —
+grepping, opening files, rebuilding the mental model you already paid for
+yesterday. On a large codebase that's thousands of tokens and several minutes
+before it does anything useful, and it happens *again* in the next session, the
+next chat, a teammate's CLI.
+
+The usual fix is hand-written docs — which rot the moment the code moves, so the
+agent learns to distrust them. The knowledge stays trapped: rebuilt per session,
+per agent, per tool.
+
+## What you get instead
+
+Analyze the repo **once**. Focused lenses (architecture, domain, technical, ops)
+read the code at HEAD and turn it into three things your agent actually loads:
+
+- **Task skills** — `fix-bug`, `add-feature`, `add-domain`, `write-tests`,
+  `scaffold` — each grounded in *this* repo's real files, commands, and gotchas
+  (symptom→file triage, the exact wiring step, the trap that causes the 404).
+  Not generic advice; scaled to the repo's size.
+- **A wiki** — an agent-loadable knowledge base plus a standalone HTML viewer,
+  pulled in on demand when a task needs the deep context.
+- **A routing `CLAUDE.md` / `AGENTS.md`** — the always-in-context keystone: ~50
+  lines that orient any session and point it at the skills above instead of
+  re-exploring. Merge-safe — it augments a managed block and never clobbers your
+  hand-written rules.
+
+Everything installs via `npx skills` and is **self-contained** — no daemon, no
+vector DB, no `$CLAUDE_PLUGIN_ROOT`, no Claude-only lock-in. The lenses read HEAD,
+so the analysis is *current*, not a stale doc; re-run after changes and only what
+moved is refreshed.
+
+> Optional: if you run [wicked-brain](https://github.com/mikeparcewski), point
+> `repo-analyst --enrich-from-brain` at it to fold in design rationale (ADRs,
+> decisions) the code alone can't show. It's additive only — the lenses stay the
+> source of truth, and nothing it produces needs a server at runtime.
+
+---
 
 ## Skills
 
@@ -174,4 +210,3 @@ canonical IDs, strict H2 anchor order, file-based `[src: …]` citations, a
 5-rule lint self-check, and an Evidence / Open Questions / Confidence closer).
 The `slug` is the article's wiki-system identity; the `ref_file` is the stable
 on-disk name the wiki router and task skills load.
-```
