@@ -13,16 +13,15 @@
                                                               /____/
 ```
 
-**Turn any repo into installable agent skills + a routing `CLAUDE.md`.** Your
-agent CLI wakes up oriented in ~50 curated lines instead of re-reading the whole
-codebase every session. No server. No embeddings. No lock-in.
+**Your agent already remembers *what* your repo is. It still re-figures-out *how
+to change it* every single task.** wicked-understanding hands it the how — this
+repo's real playbooks for fixing a bug, adding a feature, or writing a test (the
+exact files, the wiring step, the command, the gotcha that bites) — so it spends
+the turn doing the work instead of rediscovering the method from scratch.
 
 ```bash
 npx skills add mikeparcewski/wicked-understanding --all
 ```
-
-(`--skill repo-analyst` installs just one; the per-repo skills it *generates*
-install the same way — the pipeline runs `npx skills add` for you.)
 
 Works with **Claude Code**, **Gemini CLI**, **Cursor**, **Codex**, and **Copilot
 CLI** — anything the [`skills`](https://agentskills.io) standard targets. Dogfooded
@@ -32,41 +31,43 @@ on four real repos: Python, Node, a large TypeScript monorepo, and Go.
 
 ## The problem
 
-Every session, your agent wakes up blank and rediscovers the same repository —
-grepping, opening files, rebuilding the mental model you already paid for
-yesterday. On a large codebase that's thousands of tokens and several minutes
-before it does anything useful, and it happens *again* in the next session, the
-next chat, a teammate's CLI.
+Memory and context tools have gotten good at telling your agent *what* your repo
+is. None of them tell it *how to work in it*. So every task starts the same way:
+the agent greps around, opens files, and re-derives the method — which file owns
+this kind of bug, what the add-a-feature sequence is, where the new code gets
+wired in, which command actually runs the tests, the one convention that breaks
+everything if you miss it. It reconstructs all of that, sometimes wrong, **every
+session, in every chat, across every CLI** — and throws it away when the session
+ends.
 
-The usual fix is hand-written docs — which rot the moment the code moves, so the
-agent learns to distrust them. The knowledge stays trapped: rebuilt per session,
-per agent, per tool.
+That rediscovery is the slow, error-prone part. The agent burns its first chunk of
+effort relearning *how* before it can touch the *what you asked for*.
 
 ## What you get instead
 
-Analyze the repo **once**. Focused lenses (architecture, domain, technical, ops)
-read the code at HEAD and turn it into three things your agent actually loads:
+Analyze the repo **once** and give the agent the how. Focused lenses read the code
+at HEAD and turn it into repo-specific playbooks the agent loads on demand:
 
-- **Task skills** — `fix-bug`, `add-feature`, `add-domain`, `write-tests`,
-  `scaffold` — each grounded in *this* repo's real files, commands, and gotchas
-  (symptom→file triage, the exact wiring step, the trap that causes the 404).
-  Not generic advice; scaled to the repo's size.
-- **A wiki** — an agent-loadable knowledge base plus a standalone HTML viewer,
-  pulled in on demand when a task needs the deep context.
-- **A routing `CLAUDE.md` / `AGENTS.md`** — the always-in-context keystone: ~50
-  lines that orient any session and point it at the skills above instead of
-  re-exploring. Merge-safe — it augments a managed block and never clobbers your
-  hand-written rules.
+- **The how — task playbooks.** `fix-bug`, `add-feature`, `add-domain`,
+  `write-tests`, `scaffold`, each written for *this* repo: symptom→file triage,
+  the exact step order, the real wiring point ("register it here or it won't
+  boot"), the test command, the trap that causes the 404. The agent *follows* the
+  method instead of guessing at it.
+- **The why, on demand — a wiki.** An agent-loadable knowledge base + HTML viewer
+  for the deeper context a playbook points to when a task needs it.
+- **The router — a `CLAUDE.md` / `AGENTS.md` block.** ~50 always-loaded lines that
+  send the agent to the right playbook for the task at hand. Merge-safe: it
+  augments a managed block and never touches your hand-written rules.
 
-Everything installs via `npx skills` and is **self-contained** — no daemon, no
-vector DB, no `$CLAUDE_PLUGIN_ROOT`, no Claude-only lock-in. The lenses read HEAD,
-so the analysis is *current*, not a stale doc; re-run after changes and only what
-moved is refreshed.
+It installs as skills via `npx skills` and runs in any CLI — self-contained: no
+server, no vector DB, no lock-in. The lenses read HEAD, so the playbooks track the
+code instead of rotting like hand-written docs; re-run after a change and only
+what moved is refreshed.
 
-> Optional: if you run [wicked-brain](https://github.com/mikeparcewski), point
-> `repo-analyst --enrich-from-brain` at it to fold in design rationale (ADRs,
-> decisions) the code alone can't show. It's additive only — the lenses stay the
-> source of truth, and nothing it produces needs a server at runtime.
+> Already use memory or [wicked-brain](https://github.com/mikeparcewski)? Keep
+> them — they cover the *what*. This is the *how*, and it complements them: point
+> `repo-analyst --enrich-from-brain` at a running brain to fold in design
+> rationale (ADRs, decisions) the code alone can't show. Additive only.
 
 ---
 
