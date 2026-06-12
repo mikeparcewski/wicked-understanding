@@ -8,8 +8,12 @@ Run the script and assert:
   - both articles surface: their on-disk stems (article ids) AND their
     frontmatter slugs are embedded in the page
   - the repo name (derived by stripping `-wiki`) appears in the title chrome
+  - the viewer is TRULY self-contained: NO external https:// CDN script/style
+    references (the air-gapped/offline guarantee), and the Markdown renderer +
+    highlighter are inlined.
 """
 
+import re
 import shutil
 import tempfile
 import unittest
@@ -74,6 +78,55 @@ class TestGenerateViewer(unittest.TestCase):
     def test_repo_name_in_chrome(self):
         # get_repo_name strips "-wiki" and title-cases -> "Acme Payments".
         self.assertIn("Acme Payments", self.html)
+
+    # ── Offline self-containment guarantees ─────────────────────────────────────
+    # These are the tests that should have caught the "self-contained viewer that
+    # silently breaks offline" defect: it hard-loaded marked.js + highlight.js
+    # from public CDNs, so in an air-gapped environment it rendered raw markdown
+    # with no highlighting while the suite stayed green.
+
+    def test_no_external_cdn_references(self):
+        """The viewer must carry ZERO external https:// references — no CDN at all.
+
+        Asserts both the broad signal (no `https://` substring anywhere) and the
+        specific one (no <script src="http...">/<link href="http..."> tags). An
+        external dependency is exactly what breaks the air-gapped/offline use case.
+        """
+        self.assertNotIn(
+            "https://", self.html,
+            "viewer HTML contains an external https:// reference — not offline-safe",
+        )
+        self.assertNotIn(
+            "http://", self.html,
+            "viewer HTML contains an external http:// reference — not offline-safe",
+        )
+        # No external script/link tags at all (any scheme, // protocol-relative too).
+        external_tag = re.compile(
+            r"<(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*[\"'](?:https?:)?//",
+            re.IGNORECASE,
+        )
+        match = external_tag.search(self.html)
+        self.assertIsNone(
+            match,
+            f"viewer HTML references an external script/style: {match.group(0) if match else ''!r}",
+        )
+
+    def test_known_cdn_hosts_absent(self):
+        """The specific CDN hosts the old viewer used must not appear."""
+        for host in ("cdn.jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com"):
+            self.assertNotIn(host, self.html, f"viewer still references CDN host {host!r}")
+
+    def test_renderer_and_highlighter_inlined(self):
+        """The Markdown renderer + highlighter ship INSIDE the HTML (not via CDN).
+
+        The viewer JS calls marked.parse / marked.setOptions / hljs.highlightElement;
+        those globals must be defined inline so the page works with no network.
+        """
+        self.assertIn("window.marked", self.html, "inlined marked shim missing")
+        self.assertIn("window.hljs", self.html, "inlined hljs shim missing")
+        # And the call sites the viewer relies on are present.
+        self.assertIn("marked.parse", self.html)
+        self.assertIn("hljs.highlightElement", self.html)
 
 
 if __name__ == "__main__":

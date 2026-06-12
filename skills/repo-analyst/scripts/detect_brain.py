@@ -16,13 +16,18 @@ Usage:
     python3 detect_brain.py --url http://localhost:4242 --timeout 2
 
 Output: a single JSON object to stdout, e.g.
-    {"available": true,  "url": "http://localhost:4242", "reason": "reachable at /api/health (200)"}
+    {"available": true,  "url": "http://localhost:4242", "reason": "brain health ok (status=ok)"}
     {"available": false, "url": "http://localhost:4242", "reason": "connection refused"}
     {"available": false, "url": "http://localhost:4242", "reason": "timed out after 2s"}
+    {"available": false, "url": "http://localhost:4242", "reason": "/api returned 404 (not a brain)"}
 
-"Available" means a probe path returned an HTTP response with status < 500 (the
-server is up and serving). 5xx, connection refused, timeout, DNS failure, malformed
-URL, or all-paths-failed → available:false. Exit code is always 0.
+"Available" means the server at the URL is actually a working wicked-brain: it
+answers the `health` action on `POST /api` with a 200 and a brain-shaped JSON
+body (the documented {"status":"ok", ...} health response). Port-liveness alone
+is NOT enough — a random web server (or any service) that returns 200/404 on a
+plain GET is NOT a brain and reports available:false. 4xx/5xx, a non-JSON body,
+a JSON body without the health marker, connection refused, timeout, DNS failure,
+or a malformed URL all → available:false. Exit code is always 0.
 """
 
 import argparse
@@ -36,82 +41,108 @@ import urllib.request
 # Default base URL when neither --url nor WICKED_BRAIN_URL is set.
 DEFAULT_URL = "http://localhost:4242"
 
-# Probe these paths in order until one yields an HTTP response (status < 500).
-PROBE_PATHS = ["/api/health", "/health", "/api", "/"]
+# The wicked-brain server exposes a single endpoint: POST /api with an action.
+# We confirm the brain by invoking the `health` action and validating the reply.
+API_PATH = "/api"
+HEALTH_BODY = json.dumps({"action": "health"}).encode("utf-8")
 
 
-def _probe_path(base: str, path: str, timeout: float):
-    """Probe one path. Returns (available, reason) or (None, reason).
+def _is_brain_health(payload) -> bool:
+    """True iff the decoded JSON body looks like a wicked-brain health response.
 
-    (True, reason)  -> got an HTTP response with status < 500 (server is serving).
-    (None, reason)  -> a 5xx (server up but erroring) or a 404/etc that doesn't
-                       prove serving on THIS path; caller keeps trying other paths.
+    The documented health action returns {"status": "ok", "uptime": <ms>,
+    "brain_id": <str>, ...}. We accept it as a brain when the body is a JSON
+    object that is NOT an error and carries a recognizable health marker —
+    `status == "ok"`, or one of the brain-specific fields (`brain_id`,
+    `uptime`). This rejects a generic 200 (e.g. {"error": "..."} or a body
+    with no brain shape) so port-liveness alone can't pass.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "error" in payload:
+        return False
+    status = payload.get("status")
+    if isinstance(status, str) and status.lower() == "ok":
+        return True
+    # Fall back to brain-specific fields the health action always emits.
+    return ("brain_id" in payload) or ("uptime" in payload)
+
+
+def _probe_health(base: str, timeout: float):
+    """POST the `health` action to /api and validate the brain-shaped reply.
+
+    Returns (True, reason) when a working brain is confirmed, else (False, reason).
     Raises only the urllib/socket errors the caller translates into a hard
     available:false (connection refused, timeout, DNS) — never anything else.
     """
-    url = base.rstrip("/") + path
-    req = urllib.request.Request(url, method="GET")
+    url = base.rstrip("/") + API_PATH
+    req = urllib.request.Request(
+        url, data=HEALTH_BODY, method="POST",
+        headers={"Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             status = getattr(resp, "status", None) or resp.getcode()
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
-        # The server responded — that alone proves it is up and serving.
-        # < 500 counts as available; 5xx means up-but-erroring, keep probing.
-        status = exc.code
-        if status < 500:
-            return True, f"reachable at {path} ({status})"
-        return None, f"{path} returned {status}"
-    else:
-        if status is not None and status < 500:
-            return True, f"reachable at {path} ({status})"
-        return None, f"{path} returned {status}"
+        # The server responded with an error status. A live port that 4xx/5xx
+        # on the brain API is NOT a working brain.
+        return False, f"{API_PATH} returned {exc.code} (not a brain)"
+
+    if status is None or status >= 400:
+        return False, f"{API_PATH} returned {status} (not a brain)"
+
+    # Status is a 2xx/3xx — now require a brain-shaped JSON body. A 200 from a
+    # non-brain server (or a brain error envelope) must NOT count as available.
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return False, f"{API_PATH} returned non-JSON body (not a brain)"
+
+    if _is_brain_health(payload):
+        marker = payload.get("status") or payload.get("brain_id") or "ok"
+        return True, f"brain health ok (status={marker})"
+    return False, f"{API_PATH} responded but not a brain health body"
 
 
 def probe(base: str, timeout: float) -> dict:
-    """Probe the base URL across PROBE_PATHS. Returns the verdict dict.
+    """Probe the base URL by invoking the brain `health` action. Returns verdict.
 
     Never raises: every URLError / timeout / socket error / unexpected exception
     collapses into available:false with a short reason.
     """
-    last_reason = "all probe paths failed"
-    for path in PROBE_PATHS:
-        try:
-            available, reason = _probe_path(base, path, timeout)
-        except urllib.error.URLError as exc:
-            # Connection refused, DNS failure, timeout surfacing as URLError, etc.
-            reason = exc.reason
-            if isinstance(reason, socket.timeout) or isinstance(exc, socket.timeout):
-                return {"available": False, "url": base,
-                        "reason": f"timed out after {_fmt_timeout(timeout)}s"}
-            if isinstance(reason, socket.gaierror):
-                return {"available": False, "url": base,
-                        "reason": "DNS resolution failed"}
-            text = str(reason) if reason else str(exc)
-            low = text.lower()
-            if "refused" in low:
-                return {"available": False, "url": base, "reason": "connection refused"}
-            if "timed out" in low or "timeout" in low:
-                return {"available": False, "url": base,
-                        "reason": f"timed out after {_fmt_timeout(timeout)}s"}
-            # Other transport-level failure (e.g. unknown host, unsupported proto).
-            return {"available": False, "url": base, "reason": text or "connection failed"}
-        except socket.timeout:
+    try:
+        available, reason = _probe_health(base, timeout)
+    except urllib.error.URLError as exc:
+        # Connection refused, DNS failure, timeout surfacing as URLError, etc.
+        reason = exc.reason
+        if isinstance(reason, socket.timeout) or isinstance(exc, socket.timeout):
             return {"available": False, "url": base,
                     "reason": f"timed out after {_fmt_timeout(timeout)}s"}
-        except (ValueError, OSError) as exc:
-            # Malformed URL (no host), socket-level OSError, etc. Don't keep probing
-            # a structurally broken base — report once.
+        if isinstance(reason, socket.gaierror):
             return {"available": False, "url": base,
-                    "reason": str(exc) or "invalid url"}
-        except Exception as exc:  # noqa: BLE001 — a probe must never raise.
+                    "reason": "DNS resolution failed"}
+        text = str(reason) if reason else str(exc)
+        low = text.lower()
+        if "refused" in low:
+            return {"available": False, "url": base, "reason": "connection refused"}
+        if "timed out" in low or "timeout" in low:
             return {"available": False, "url": base,
-                    "reason": str(exc) or "probe failed"}
+                    "reason": f"timed out after {_fmt_timeout(timeout)}s"}
+        # Other transport-level failure (e.g. unknown host, unsupported proto).
+        return {"available": False, "url": base, "reason": text or "connection failed"}
+    except socket.timeout:
+        return {"available": False, "url": base,
+                "reason": f"timed out after {_fmt_timeout(timeout)}s"}
+    except (ValueError, OSError) as exc:
+        # Malformed URL (no host), socket-level OSError, etc.
+        return {"available": False, "url": base,
+                "reason": str(exc) or "invalid url"}
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise.
+        return {"available": False, "url": base,
+                "reason": str(exc) or "probe failed"}
 
-        if available:
-            return {"available": True, "url": base, "reason": reason}
-        last_reason = reason  # 5xx / non-serving status — try the next path.
-
-    return {"available": False, "url": base, "reason": last_reason}
+    return {"available": bool(available), "url": base, "reason": reason}
 
 
 def _fmt_timeout(timeout: float) -> str:

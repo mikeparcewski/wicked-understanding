@@ -10,7 +10,14 @@ Usage:
 
 Reads all .md files from the skill directory's refs/ folder, embeds
 them as JSON in a single HTML file. No server required — open in any
-browser. Uses marked.js + highlight.js from CDN.
+browser.
+
+OFFLINE-SAFE: the Markdown renderer + syntax highlighter are inlined
+from scripts/vendor/offline-md.js. The viewer has NO external CDN
+dependency, so it renders fully (with highlighting) in air-gapped /
+enterprise environments. There is intentionally zero `https://` script
+or stylesheet reference in the generated HTML — see
+tests/test_generate_viewer.py::test_no_external_cdn_references.
 """
 
 import argparse
@@ -19,6 +26,12 @@ import os
 import re
 import sys
 from pathlib import Path
+
+# Inlined offline Markdown renderer + highlighter (replaces CDN marked.js +
+# highlight.js). Bundled with the skill under scripts/vendor/ so generation
+# never touches the network and the viewer runs fully offline.
+VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+OFFLINE_MD_JS = VENDOR_DIR / "offline-md.js"
 
 
 # ── frontmatter parser ────────────────────────────────────────────────────────
@@ -162,15 +175,27 @@ def generate_html(skill_dir: Path, output_path: Path):
 
     articles_json = json.dumps(articles, ensure_ascii=False)
 
+    # Read the offline Markdown renderer + highlighter to inline it. This is the
+    # offline-safety guarantee: the libraries ship INSIDE the HTML, not from a CDN.
+    try:
+        offline_md_js = OFFLINE_MD_JS.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error: offline renderer not found at {OFFLINE_MD_JS}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    # Guard against a stray closing </script> in the vendored source breaking
+    # the inline <script> block (defensive; the vendored file has none).
+    offline_md_js = offline_md_js.replace("</script>", "<\\/script>")
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{repo_name} Wiki</title>
-<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<!-- Offline-safe: Markdown renderer + highlighter are inlined below; NO CDN. -->
+<script>
+{offline_md_js}
+</script>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
@@ -285,6 +310,13 @@ def generate_html(skill_dir: Path, output_path: Path):
     overflow-x: auto; position: relative;
   }}
   .article-body pre code {{ background: none; border: none; padding: 0; color: #e2e8f0; font-size: 13px; }}
+
+  /* ── Inline syntax-highlight theme (offline; replaces highlight.js CDN CSS) ── */
+  .article-body pre code.hljs {{ color: #e2e8f0; }}
+  .hljs-comment {{ color: #94a3b8; font-style: italic; }}
+  .hljs-string  {{ color: #86efac; }}
+  .hljs-number  {{ color: #fca5a5; }}
+  .hljs-keyword {{ color: #93c5fd; font-weight: 600; }}
   .copy-btn {{
     position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,.1);
     border: 1px solid rgba(255,255,255,.2); color: #94a3b8; font-size: 11px;
