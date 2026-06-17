@@ -24,11 +24,14 @@ VIEWER_SCRIPT = PLUGIN_ROOT / "skills" / "repo-wiki-planner" / "scripts" / "gene
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
-def run_script(script_path, *args, env=None, cwd=None, timeout=60):
+def run_script(script_path, *args, env=None, cwd=None, timeout=60, stdin=None):
     """Run a plugin script as a subprocess and return the CompletedProcess.
 
     Captures text stdout/stderr. `env`, when provided, fully replaces the
-    child environment (callers should start from os.environ.copy()).
+    child environment (callers should start from os.environ.copy()). `stdin`,
+    when provided (e.g. ``subprocess.DEVNULL``), is passed through — useful to
+    prove a script never blocks on an interactive prompt (a stray ``input()``
+    would raise EOFError on a closed stdin rather than hang the suite).
     """
     cmd = [sys.executable, str(script_path), *[str(a) for a in args]]
     return subprocess.run(
@@ -38,6 +41,7 @@ def run_script(script_path, *args, env=None, cwd=None, timeout=60):
         env=env,
         cwd=None if cwd is None else str(cwd),
         timeout=timeout,
+        stdin=stdin,
     )
 
 

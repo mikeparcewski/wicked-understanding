@@ -112,12 +112,110 @@ def load_artifact(artifacts_dir: Path, filename: str) -> str:
     return ""
 
 
+# --- Deterministic article ceiling (runaway BACKSTOP, not the primary gate) ---
+#
+# The primary "is this article set comprehensive and right-sized?" decision is
+# the AGENT-JUDGED plan-reviewer sub-step in SKILL.md (Step 1.5): an LLM scores
+# the plan against the 4 lenses (coverage / redundancy / evidence-warrant) and
+# APPROVES / TRIMS / EXPANDS it. That replaced the old ">8 → confirm with the
+# user" human prompt so the pipeline runs unattended.
+#
+# This function is the deterministic safety net underneath that judgment: if a
+# pathological run still proposes more than `max_articles`, cap it so the run
+# never wedges or ships a bloated wiki. It is intentionally conservative — it
+# only ever drops the two *capped, optional* article types (`capability` /
+# `concept-explanation`), lowest priority first, and never touches an always-on
+# or structural article. It returns the canonical IDs it removed so the caller
+# (and the reviewer / `broken_reference` lint) can reconcile any surviving
+# `## See also` row that pointed at a trimmed article.
+
+# Article types the backstop may drop. These are exactly the two CAPPED,
+# optional types (article-types.md: capability cap 5, concept-explanation cap 5).
+# Always-on (product-overview, onboarding-maintainer) and structural
+# (architecture-overview, api-reference, domain-reference, design-pattern,
+# runbook, agent-roster) articles are never auto-dropped — a runaway count is
+# almost always an over-generation of cap-*/concept-* articles, and the forge's
+# fixed 7-ref link set never points at those, so dropping them cannot orphan a
+# task-skill link (only an intra-wiki `See also`, which the report flags).
+TRIMMABLE_TYPES = ("capability", "concept-explanation")
+
+
+def canonical_id_for(article: dict) -> str:
+    """Best-effort canonical ID for an article, for trim-report reconciliation.
+
+    Prefers an explicit `canonical_for` (string or first list entry); falls back
+    to the uppercased `slug`. The reviewer uses this to find and drop dangling
+    `## See also` rows after a trim — it is a reconciliation hint, not a
+    frontmatter rewrite (the scripts never edit article prose)."""
+    cf = article.get("canonical_for")
+    if isinstance(cf, list) and cf:
+        return str(cf[0]).strip()
+    if isinstance(cf, str) and cf.strip():
+        return cf.strip()
+    slug = article.get("slug", "").strip()
+    return slug.upper()
+
+
+def cap_articles(articles: list, max_articles: int) -> tuple[list, list]:
+    """Cap the article set at `max_articles` as a runaway backstop.
+
+    Returns (kept, trimmed). Drops only TRIMMABLE_TYPES, lowest `priority`
+    (then later list position) first, until the total is within the cap. If the
+    set is already within the cap — the expected case once the agent reviewer has
+    right-sized it — this is a no-op and `trimmed` is empty. Never drops below
+    the count of non-trimmable articles even if that exceeds the cap (a wiki must
+    keep its always-on + structural articles; the report surfaces the overflow).
+    """
+    if max_articles is None or len(articles) <= max_articles:
+        return list(articles), []
+
+    # Stable index so ties break by original plan order, not dict identity.
+    indexed = list(enumerate(articles))
+    n_to_drop = len(articles) - max_articles
+
+    # Candidates are only the trimmable types, ordered worst-first:
+    # lowest priority first (priority 99 = unranked → dropped first), then
+    # latest list position first.
+    candidates = [
+        (idx, art) for idx, art in indexed if art.get("type") in TRIMMABLE_TYPES
+    ]
+    candidates.sort(key=lambda t: (t[1].get("priority", 99), t[0]), reverse=True)
+
+    drop_indices = {idx for idx, _ in candidates[:n_to_drop]}
+    kept = [art for idx, art in indexed if idx not in drop_indices]
+    trimmed = [art for idx, art in indexed if idx in drop_indices]
+    return kept, trimmed
+
+
 def main():
     parser = argparse.ArgumentParser(description="Assemble wiki SKILL.md from plan + artifacts")
     parser.add_argument("--plan-file", required=True)
     parser.add_argument("--skill-staging", required=True, help="Directory to write {repo}-wiki/SKILL.md into")
     parser.add_argument("--artifacts-dir", required=True)
+    parser.add_argument(
+        "--max-articles",
+        type=int,
+        default=8,
+        help=(
+            "Deterministic runaway BACKSTOP: hard ceiling on the article count. "
+            "Not the primary gate — the agent plan-reviewer (SKILL.md Step 1.5) "
+            "right-sizes the plan first. This only caps a pathological count, "
+            "dropping lowest-priority capability/concept-explanation articles. "
+            "Default 8. Use 0 to disable the backstop entirely."
+        ),
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "Opt-in: when the backstop would trim, list the over-cap set and the "
+            "articles it dropped for an operator to review. Off by default so the "
+            "pipeline runs unattended (the agent reviewer is the judgment step)."
+        ),
+    )
     args = parser.parse_args()
+    # max_articles <= 0 disables the backstop (let the agent reviewer be sole judge).
+    max_articles = args.max_articles if args.max_articles and args.max_articles > 0 else None
 
     plan_path = Path(args.plan_file)
     staging_dir = Path(args.skill_staging)
@@ -140,6 +238,61 @@ def main():
     repo_type = plan.get("type", "service")
     articles = plan.get("articles", [])
     generated_at = plan.get("generated_at", "")
+
+    # --- Deterministic runaway backstop (NOT the primary gate) ---
+    # The agent plan-reviewer (SKILL.md Step 1.5) is the primary comprehensiveness
+    # judge and should have right-sized the plan already; in the normal path this
+    # cap is a no-op. It only fires if a pathological run still proposed too many
+    # articles, so the unattended pipeline never wedges or ships a bloated wiki.
+    articles, trimmed = cap_articles(articles, max_articles)
+    if trimmed:
+        trimmed_ids = [canonical_id_for(a) for a in trimmed]
+        # Emit a machine-readable trim report next to the plan so the reviewer /
+        # broken_reference lint can reconcile any surviving `## See also` row that
+        # pointed at a dropped article. (The scripts never edit article prose —
+        # this is the deterministic hand-off to the LLM reconciliation step.)
+        report = {
+            "capped_at": max_articles,
+            "original_count": len(articles) + len(trimmed),
+            "kept_count": len(articles),
+            "trimmed_count": len(trimmed),
+            "trimmed_articles": [
+                {
+                    "type": a.get("type"),
+                    "slug": a.get("slug"),
+                    "ref_file": a.get("ref_file"),
+                    "canonical_id": canonical_id_for(a),
+                    "title": a.get("title"),
+                }
+                for a in trimmed
+            ],
+            "trimmed_canonical_ids": trimmed_ids,
+            "reconcile": (
+                "Drop any `## See also` / frontmatter `references:` row in a "
+                "SURVIVING article that points at one of trimmed_canonical_ids, "
+                "or the broken_reference lint will fail."
+            ),
+        }
+        report_path = plan_path.with_name(plan_path.stem + ".trim-report.json")
+        report_path.write_text(json.dumps(report, indent=2))
+        print(
+            f"BACKSTOP: article count exceeded --max-articles={max_articles}; "
+            f"deterministically trimmed {len(trimmed)} lowest-priority "
+            f"capability/concept article(s): {', '.join(trimmed_ids)}",
+            file=sys.stderr,
+        )
+        print(
+            f"BACKSTOP: reconcile surviving `## See also` refs against "
+            f"{report_path} (trimmed canonical IDs: {', '.join(trimmed_ids)}).",
+            file=sys.stderr,
+        )
+        if args.interactive:
+            print(
+                "BACKSTOP (--interactive): operator review requested. Trimmed "
+                f"set written to {report_path}. Re-run with a higher "
+                "--max-articles to keep more, or accept the trim.",
+                file=sys.stderr,
+            )
 
     # Load analysis artifacts (bare names — the store dir is already per-repo)
     survey = load_artifact(artifacts_dir, "survey.md")

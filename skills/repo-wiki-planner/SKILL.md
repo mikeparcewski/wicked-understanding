@@ -73,7 +73,12 @@ If ≥ 3 operations (cap 5): `capability` per feature
 If ≥ 3 glossary terms (cap 5): `concept-explanation` per term
 If multi-step ops (cap 3): `runbook`
 
-Confirm the plan with the user if > 8 articles.
+The count thresholds above are the *first draft* of the set. Do **not** confirm
+it with the user — this pipeline must run unattended (`CLAUDE.md` Mandate: "a
+stranger can run it unattended and trust the output"). The set is right-sized by
+the **agent plan-reviewer in Step 1.5**, and a deterministic ceiling
+(`--max-articles`, Step 3) is the runaway backstop underneath it. There is no
+human prompt in the normal path.
 
 Write the plan to `/tmp/{repo}-wiki-plan.json`. Both downstream scripts read it:
 
@@ -115,6 +120,75 @@ task skills load — assign it from this table:
 | runbook | `ops.md` (or `runbook-{op}.md` if > 1) |
 | agent-roster | `agents.md` |
 
+**Step 1.5 — Review the plan for comprehensiveness (agent-judged; replaces the old human confirm)**
+
+This is the comprehensiveness gate. It is **LLM judgment, not a script** —
+deterministic mechanics can't decide whether an article set covers a repo or
+whether two articles overlap, so this stays an agent step (the repo's hard rule:
+agents do judgment, scripts do mechanics). It runs **before** generating any ref
+file (cheap to re-plan; expensive to re-generate) and **before** the assembler.
+No user is asked anything — the agent decides and proceeds.
+
+Re-read the 4 lens artifacts (`architecture.md`, `domain.md`, `technical.md`,
+`ops.md`) plus `survey.md`, and score the *proposed* `articles[]` against them on
+three axes. Be brutally honest (`CLAUDE.md` Voice) — the goal is a set a stranger
+can trust, not a long set:
+
+1. **COVERAGE** — does the set represent everything the lenses actually
+   discovered? Walk each lens's findings and confirm each is reachable from some
+   article:
+   - architecture.md components / entry points / layers → `architecture-overview`
+     (and `capability` for the load-bearing flows);
+   - domain.md Core Entities + Core Operations → `domain-reference` + the
+     `capability` articles for the highest-impact operations;
+   - technical.md API surface → `api-reference`;
+   - ops.md multi-step procedures → `runbook`;
+   - domain.md Glossary terms that confuse a newcomer → `concept-explanation`.
+   A discovered subsystem/entry-point/domain with **no** article that covers it
+   is a coverage gap → **EXPAND** (add the missing article, assign its `ref_file`
+   from the table above and a `priority`).
+
+2. **REDUNDANCY / right-sizing** — would two articles say largely the same thing,
+   or is an article too thin to warrant its own ref (e.g. a `capability` whose
+   whole story is two sentences already told in `domain-reference`)? Merge thin or
+   overlapping articles → **TRIM** (drop the redundant one, or fold its unique
+   point into the survivor as a `## See also` link). Prefer one well-grounded
+   article over two thin ones. Right-sizing is the point — not hitting a number.
+
+3. **EVIDENCE-WARRANT** — is each article backed by *enough* findings to clear
+   its confidence rubric (`references/article-types.md`)? An article whose primary
+   source artifact is missing or whose section mapping would be mostly inferred
+   (would land `< 0.65`) is not warranted yet → **TRIM** it, or downgrade it to a
+   `## See also` mention inside a warranted article. Don't ship an article that
+   would publish at LOW confidence just to pad the set.
+
+Apply the verdict — **APPROVE** (no change), **TRIM** (remove articles), or
+**EXPAND** (add articles) — by editing `articles[]` in the plan *before* writing
+it. Right-size first; the `--max-articles` ceiling (Step 3) is only a backstop
+for a pathological count, not the mechanism you rely on here.
+
+**After any TRIM you MUST reconcile cross-references — this is load-bearing.**
+Removing an article removes its canonical ID, so any **surviving** article whose
+`## See also` (or frontmatter `references:`) points at a *trimmed* canonical ID
+would fail the `broken_reference` lint (`references/wiki-contract.md` lint table)
+and break the unattended run. So, for every article you trim:
+- note its canonical ID (`{REPO}-{PURPOSE}-{NOUN}`, e.g. `{REPO}-CAP-REFUND`);
+- when you generate the surviving articles in Step 2, instruct each subagent
+  **not** to emit a `## See also` row or `references:` entry pointing at a trimmed
+  ID (give it the trimmed-ID list in its brief);
+- if you fold a trimmed article's point into a survivor, the survivor links the
+  *survivor's* IDs only — never the dropped one.
+The forge's task skills link only the 7 fixed stable refs
+(`overview/arch/api/onboard/domain/patterns/ops.md`) and never `cap-*`/`concept-*`,
+so trimming a `capability`/`concept-explanation` can only dangle an *intra-wiki*
+`See also` — that is exactly what this reconciliation closes.
+
+Record the verdict in your generation log (not in any article): the final article
+count, what you EXPANDED/TRIMMED and why (cite the lens finding), and the trimmed
+canonical IDs you reconciled. If `--max-articles` later trims more (Step 3), it
+writes a `*.trim-report.json` with the same `trimmed_canonical_ids` shape — apply
+the same `See also` reconciliation to those before the lint in Step 5.
+
 **Step 2 — Generate article ref files (dispatch one agent per article)**
 
 Articles are independent — dispatch one subagent per article, in a single
@@ -134,6 +208,11 @@ Write the finished article (frontmatter + body + closer) to:
   $ARTIFACTS_DIR/skills/{repo-slug}-wiki/refs/{ref_file}
 Pass all 5 lint self-checks (log to your output, not into the article).
 Use only [src: file:{path}] citations.
+The wiki batch is exactly these canonical IDs: {list every article's canonical
+ID that survived Step 1.5}. Your `## See also` rows and frontmatter
+`references:` MUST only reference IDs in that list. Do NOT reference any of these
+TRIMMED IDs (they were removed from the plan and would fail the broken_reference
+lint): {trimmed_canonical_ids from Step 1.5, or "(none)"}.
 ```
 
 **Step 3 — Assemble the wiki SKILL.md router**
@@ -147,8 +226,21 @@ skill's directory:
 python3 scripts/assemble_wiki_skill.py \
   --plan-file /tmp/{repo}-wiki-plan.json \
   --skill-staging "$ARTIFACTS_DIR/skills/{repo-slug}-wiki" \
-  --artifacts-dir "$ARTIFACTS_DIR"
+  --artifacts-dir "$ARTIFACTS_DIR" \
+  --max-articles 8
 ```
+
+`--max-articles` (default 8) is the deterministic **runaway backstop**, not the
+primary gate — the agent reviewer in Step 1.5 already right-sized the set, so in
+the normal path this caps nothing. It fires only if a pathological run still
+proposed more than the ceiling; then it deterministically drops the
+lowest-priority `capability`/`concept-explanation` articles (never an always-on
+or structural one) and writes `/tmp/{repo}-wiki-plan.trim-report.json` listing the
+`trimmed_canonical_ids`. **If that file appears, reconcile it like a Step-1.5
+trim before the Step 5 lint:** drop any surviving article's `## See also` /
+`references:` row pointing at a trimmed ID. Pass `--max-articles 0` to disable the
+backstop, or `--interactive` to have it print the over-cap set for an operator
+(off by default — the pipeline runs unattended).
 
 **Step 3.5 — Validate the package installs**
 
@@ -185,9 +277,16 @@ npx skills add "$ARTIFACTS_DIR/skills" --all
 
 **Step 5 — Lint and confirm**
 
-Lint self-check (from `references/wiki-contract.md`):
+Lint self-check (from `references/wiki-contract.md`) across the generated refs:
 - No duplicate `canonical_for` IDs
-- All `references` entries resolve
+- `broken_reference`: every `references` entry / `## See also` row resolves to a
+  canonical ID present in this batch. **This is where a missed trim
+  reconciliation surfaces** — if Step 1.5 trimmed an article, or
+  `--max-articles` wrote a `*.trim-report.json` (Step 3), verify no surviving
+  article still references a trimmed canonical ID. Fix any that do by deleting
+  the dangling `## See also` row and its `references:` entry, then re-lint. This
+  must be clean before you confirm the run — a dangling ref is the load-bearing
+  failure class the trim path exists to avoid.
 - Pages > 80 lines have ≥ 3 `references`
 - Every `canonical_for` page has `## Purpose`
 

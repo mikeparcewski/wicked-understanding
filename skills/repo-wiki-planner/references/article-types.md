@@ -28,6 +28,30 @@ names — never hardcode a ref filename in a consumer; assign it from here.
 
 ---
 
+## Right-sizing the set (agent-judged — no human confirm)
+
+The count thresholds per type below produce a *first-draft* set. The wiki planner
+then runs an **agent plan-reviewer** (`repo-wiki-planner/SKILL.md` Step 1.5) that
+scores that set against the 4 lenses on **coverage** (every discovered
+domain/entry-point/subsystem is reachable from some article), **redundancy**
+(merge thin or overlapping articles — prefer one grounded article over two thin
+ones), and **evidence-warrant** (each article clears its confidence rubric below;
+drop one that would publish `< 0.65`). It **APPROVES / TRIMS / EXPANDS** the set
+and proceeds unattended — there is no ">8 articles → confirm with the user"
+prompt. A deterministic `--max-articles` ceiling (default 8) in
+`assemble_wiki_skill.py` is only a runaway backstop beneath that judgment, and it
+may drop only `capability` / `concept-explanation` articles.
+
+**Trim ⇒ reconcile `## See also`.** Removing an article removes its canonical ID,
+so any *surviving* article whose `## See also` / `references:` points at a trimmed
+ID fails the `broken_reference` lint (`wiki-contract.md`). Whenever the reviewer
+TRIMS (or the backstop trims), drop the dangling `## See also` rows in the
+survivors. The `capability` and `concept-explanation` `## See also` guidance below
+is therefore conditional: link a sibling **only if it survived** the Step 1.5
+review.
+
+---
+
 ## Table of Contents
 
 1. [product-overview](#product-overview)
