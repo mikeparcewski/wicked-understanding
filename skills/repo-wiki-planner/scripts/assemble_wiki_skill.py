@@ -139,6 +139,32 @@ def load_artifact(artifacts_dir: Path, filename: str) -> str:
 # task-skill link (only an intra-wiki `See also`, which the report flags).
 TRIMMABLE_TYPES = ("capability", "concept-explanation")
 
+# Sentinel rank for an article whose priority is missing, explicitly null, or a
+# non-int in the plan JSON. 99 sorts it AFTER any real (low-number = high) rank,
+# so an unranked article is dropped first by the backstop and ordered last in the
+# router — and, critically, the sort never sees a None (which would raise
+# `TypeError: '<' not supported between 'NoneType' and 'int'`).
+UNRANKED_PRIORITY = 99
+
+
+def article_priority(article) -> int:
+    """Sort-safe priority for an article, tolerant of malformed plan JSON.
+
+    Returns the int `priority` when present and integer-typed; otherwise the
+    UNRANKED_PRIORITY sentinel. Handles a non-dict article, a missing key, and an
+    explicit `"priority": null` uniformly so every `sorted(...)` over the article
+    set is crash-proof."""
+    if isinstance(article, dict):
+        p = article.get("priority")
+        if isinstance(p, int):
+            return p
+    return UNRANKED_PRIORITY
+
+
+def article_type(article):
+    """`type` of an article, or None for a non-dict / type-less article."""
+    return article.get("type") if isinstance(article, dict) else None
+
 
 def canonical_id_for(article: dict) -> str:
     """Best-effort canonical ID for an article, for trim-report reconciliation.
@@ -148,12 +174,17 @@ def canonical_id_for(article: dict) -> str:
     `## See also` rows after a trim — it is a reconciliation hint, not a
     frontmatter rewrite (the scripts never edit article prose)."""
     cf = article.get("canonical_for")
-    if isinstance(cf, list) and cf:
+    if isinstance(cf, list) and cf and cf[0] is not None:
         return str(cf[0]).strip()
     if isinstance(cf, str) and cf.strip():
         return cf.strip()
-    slug = article.get("slug", "").strip()
-    return slug.upper()
+    # `article.get("slug", "")` returns None when the key is present but explicitly
+    # null in the JSON plan, so a default of "" does NOT protect .strip(). Guard
+    # the type instead (treat explicit-null / non-string slug as missing).
+    slug = article.get("slug")
+    if isinstance(slug, str):
+        return slug.strip().upper()
+    return ""
 
 
 def cap_articles(articles: list, max_articles: int) -> tuple[list, list]:
@@ -165,7 +196,15 @@ def cap_articles(articles: list, max_articles: int) -> tuple[list, list]:
     right-sized it — this is a no-op and `trimmed` is empty. Never drops below
     the count of non-trimmable articles even if that exceeds the cap (a wiki must
     keep its always-on + structural articles; the report surfaces the overflow).
+
+    Defensive against malformed plan JSON: a non-list `articles` is treated as an
+    empty set (returns ([], [])); a non-dict article, or one whose `priority` is
+    explicitly null / non-int, is tolerated — the priority sort defaults such an
+    article to the unranked sentinel (99) so it is dropped first rather than
+    raising a TypeError on `None < int`.
     """
+    if not isinstance(articles, list):
+        return [], []
     if max_articles is None or len(articles) <= max_articles:
         return list(articles), []
 
@@ -174,12 +213,13 @@ def cap_articles(articles: list, max_articles: int) -> tuple[list, list]:
     n_to_drop = len(articles) - max_articles
 
     # Candidates are only the trimmable types, ordered worst-first:
-    # lowest priority first (priority 99 = unranked → dropped first), then
-    # latest list position first.
+    # lowest priority first (UNRANKED_PRIORITY = unranked → dropped first), then
+    # latest list position first. article_priority() keeps the sort key int-typed
+    # even when an article's priority is explicitly null / non-int.
     candidates = [
-        (idx, art) for idx, art in indexed if art.get("type") in TRIMMABLE_TYPES
+        (idx, art) for idx, art in indexed if article_type(art) in TRIMMABLE_TYPES
     ]
-    candidates.sort(key=lambda t: (t[1].get("priority", 99), t[0]), reverse=True)
+    candidates.sort(key=lambda t: (article_priority(t[1]), t[0]), reverse=True)
 
     drop_indices = {idx for idx, _ in candidates[:n_to_drop]}
     kept = [art for idx, art in indexed if idx not in drop_indices]
@@ -339,9 +379,9 @@ def main():
         "runbook":               "Run operations or debug failures",
     }
     load_rows = []
-    for art in sorted(articles, key=lambda a: a.get("priority", 99)):
-        atype = art["type"]
-        ref_file = art.get("ref_file", "").strip()
+    for art in sorted(articles, key=article_priority):
+        atype = article_type(art)
+        ref_file = (art.get("ref_file") or "").strip() if isinstance(art, dict) else ""
         if not ref_file:
             continue  # no stable filename → can't produce a working link
         ref_path = ref_file if ref_file.startswith("refs/") else f"refs/{ref_file}"
@@ -359,9 +399,11 @@ def main():
     # Articles table
     articles_table = ""
     audience_labels = {"both": "both", "maintainer": "maintainer", "user": "user"}
-    for art in sorted(articles, key=lambda a: a.get("priority", 99)):
-        title = art.get("title", art["type"])
-        aud = audience_labels.get(art.get("audience", "maintainer"), "maintainer")
+    for art in sorted(articles, key=article_priority):
+        atype = article_type(art)
+        title = (art.get("title", atype) if isinstance(art, dict) else atype) or "(untitled)"
+        aud_raw = art.get("audience", "maintainer") if isinstance(art, dict) else "maintainer"
+        aud = audience_labels.get(aud_raw, "maintainer")
         # Confidence not yet known at assembly time — mark as TBD
         articles_table += f"| {title:<40} | {aud:<12} | (see article) |\n"
 
@@ -370,22 +412,23 @@ def main():
     entity_names = [r[0].strip("`") for r in entity_rows[:3]] if entity_rows else []
     entity_str = ", ".join(entity_names) if entity_names else "core entities"
 
-    n_caps = sum(1 for a in articles if a["type"] == "capability")
-    n_ops = sum(1 for a in articles if a["type"] == "runbook")
+    n_caps = sum(1 for a in articles if article_type(a) == "capability")
+    n_ops = sum(1 for a in articles if article_type(a) == "runbook")
 
     # Build the "Contains:" fragment list from the plan's STRUCTURED article set
     # (not by parsing free-form architecture prose — that proved brittle). Joined
     # with "; " for no dangling commas and correct singular/plural.
     contains = []
-    if any(a["type"] == "architecture-overview" for a in articles):
+    if any(article_type(a) == "architecture-overview" for a in articles):
         contains.append("an architecture overview")
     contains.append(f"domain model ({entity_str})")
-    if any(a["type"] == "api-reference" for a in articles):
+    if any(article_type(a) == "api-reference" for a in articles):
         contains.append("an API reference")
-    if any(a["type"] == "onboarding-maintainer" for a in articles):
+    if any(article_type(a) == "onboarding-maintainer" for a in articles):
         contains.append("maintainer onboarding")
     if n_caps > 0:
-        cap_names = [a.get("subject", "") for a in articles if a["type"] == "capability"][:3]
+        cap_names = [a.get("subject", "") for a in articles
+                     if isinstance(a, dict) and a.get("type") == "capability"][:3]
         frag = f"{n_caps} capability deep-dive{'s' if n_caps != 1 else ''}"
         named = ", ".join(filter(None, cap_names))
         contains.append(f"{frag} ({named})" if named else frag)

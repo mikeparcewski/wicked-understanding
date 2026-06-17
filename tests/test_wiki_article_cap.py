@@ -158,6 +158,164 @@ class TestCapArticlesUnit(unittest.TestCase):
         self.assertEqual(len(trimmed), 7)
 
 
+class TestMalformedPlanDefensive(unittest.TestCase):
+    """Explicit-null / wrong-type JSON values must degrade, never crash.
+
+    Plans are LLM-authored JSON: a key can be present but explicitly `null`
+    (`dict.get(key, default)` then returns None, NOT the default), and a list
+    field can arrive as the wrong type. `dict.get("slug", "").strip()` and
+    `sorted(..., key=lambda a: a.get("priority", 99))` both raise on such input
+    (AttributeError on None.strip(); TypeError on None < int). These pin the
+    guards that make the assembler tolerate it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load_cap_module()
+
+    # --- canonical_id_for: explicit-null slug / canonical_for ---
+
+    def test_canonical_id_explicit_null_slug_no_crash(self):
+        # "slug": null → .get("slug", "") returns None; old code crashed on .strip().
+        self.assertEqual(
+            self.mod.canonical_id_for({"slug": None, "canonical_for": None}), ""
+        )
+
+    def test_canonical_id_missing_slug_no_crash(self):
+        self.assertEqual(self.mod.canonical_id_for({}), "")
+
+    def test_canonical_id_explicit_null_first_canonical_for_falls_back(self):
+        # canonical_for present but first entry null → fall back to slug, not str(None).
+        self.assertEqual(
+            self.mod.canonical_id_for({"canonical_for": [None], "slug": "pay-x"}),
+            "PAY-X",
+        )
+
+    def test_canonical_id_string_slug_still_uppercased(self):
+        self.assertEqual(self.mod.canonical_id_for({"slug": "pay-x"}), "PAY-X")
+
+    # --- cap_articles: non-list / explicit-null priority / non-dict member ---
+
+    def test_cap_articles_non_list_returns_empty(self):
+        for bad in (None, {}, "articles", 7):
+            kept, trimmed = self.mod.cap_articles(bad, 8)
+            self.assertEqual((kept, trimmed), ([], []), f"non-list {bad!r} not handled")
+
+    def test_cap_articles_null_priority_does_not_crash_and_drops_first(self):
+        # An explicit "priority": null trimmable article sorts as unranked (99) and
+        # is dropped before a ranked one when the cap bites.
+        articles = [
+            {"type": "product-overview", "slug": "o", "ref_file": "o.md", "priority": 1},
+            {"type": "capability", "slug": "c-null", "ref_file": "c-null.md",
+             "priority": None, "canonical_for": ["X-CAP-NULL"]},
+            {"type": "capability", "slug": "c-ranked", "ref_file": "c-ranked.md",
+             "priority": 5, "canonical_for": ["X-CAP-RANKED"]},
+        ]
+        kept, trimmed = self.mod.cap_articles(articles, 2)
+        self.assertEqual(len(trimmed), 1)
+        self.assertEqual(trimmed[0]["slug"], "c-null",
+                         "null-priority article should be dropped first (unranked)")
+        kept_slugs = {a["slug"] for a in kept}
+        self.assertEqual(kept_slugs, {"o", "c-ranked"})
+
+    def test_cap_articles_tolerates_non_dict_member(self):
+        # A malformed list with a stray non-dict entry must not raise; the non-dict
+        # is non-trimmable (article_type → None) so it is kept, ranked last.
+        articles = [
+            {"type": "capability", "slug": "c1", "ref_file": "c1.md", "priority": 5,
+             "canonical_for": ["X-CAP-1"]},
+            "i-am-not-a-dict",
+            {"type": "capability", "slug": "c2", "ref_file": "c2.md", "priority": 6,
+             "canonical_for": ["X-CAP-2"]},
+        ]
+        kept, trimmed = self.mod.cap_articles(articles, 2)
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(len(trimmed), 1)
+        self.assertIn("i-am-not-a-dict", kept, "non-dict member was wrongly dropped")
+
+    def test_article_priority_helper_coerces_bad_values(self):
+        self.assertEqual(self.mod.article_priority({"priority": 3}), 3)
+        self.assertEqual(self.mod.article_priority({"priority": None}),
+                         self.mod.UNRANKED_PRIORITY)
+        self.assertEqual(self.mod.article_priority({"priority": "high"}),
+                         self.mod.UNRANKED_PRIORITY)
+        self.assertEqual(self.mod.article_priority({}), self.mod.UNRANKED_PRIORITY)
+        self.assertEqual(self.mod.article_priority("not-a-dict"),
+                         self.mod.UNRANKED_PRIORITY)
+
+
+class TestMalformedPlanEndToEnd(unittest.TestCase):
+    """The real assembler must exit 0 on a plan with explicit-null priorities.
+
+    Reproduces the latent crash the cap fix alone would NOT have caught: even
+    after cap_articles is guarded, main()'s `sorted(articles, ...)` for the Load
+    guide + article table would still hit `None < int` on a surviving article
+    whose priority is explicitly null. This drives the script end-to-end with
+    such a plan and asserts a written router, no traceback.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(cls._tmp.name)
+        artifacts = tmp / "artifacts"
+        artifacts.mkdir()
+        (artifacts / "survey.md").write_text("# Survey\n## Purpose & Context\nA service.\n")
+        # A small, within-cap plan so the backstop is a no-op — isolating the
+        # main() sort path. Two articles carry an explicit null priority; one omits
+        # priority entirely; one omits slug. None of these may crash the assembler.
+        plan = {
+            "repo": "null-prio-repo", "stack": "Python", "type": "service",
+            "generated_at": "2026-06-17T00:00:00+00:00",
+            "articles": [
+                {"type": "product-overview", "slug": "np-overview",
+                 "ref_file": "overview.md", "title": "Overview", "audience": "both",
+                 "priority": None, "canonical_for": ["NP-OVERVIEW"]},
+                {"type": "architecture-overview", "slug": None,
+                 "ref_file": "arch.md", "title": "Architecture", "audience": "maintainer",
+                 "canonical_for": ["NP-ARCH"]},
+                {"type": "capability", "slug": "np-cap-x", "ref_file": "cap-x.md",
+                 "title": "Capability: X", "audience": "both", "priority": None,
+                 "subject": "x", "canonical_for": ["NP-CAP-X"]},
+            ],
+        }
+        cls.plan_path = tmp / "null-prio-repo-wiki-plan.json"
+        cls.plan_path.write_text(json.dumps(plan))
+        cls.staging = tmp / "null-prio-repo-wiki"
+        cls.result = _support.run_script(
+            ASSEMBLE,
+            "--plan-file", cls.plan_path,
+            "--skill-staging", cls.staging,
+            "--artifacts-dir", artifacts,
+            "--max-articles", "8",
+            stdin=subprocess.DEVNULL,
+        )
+        cls.skill_path = cls.staging / "SKILL.md"
+        cls.skill_text = cls.skill_path.read_text() if cls.skill_path.exists() else ""
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_exits_zero_no_traceback(self):
+        self.assertEqual(self.result.returncode, 0, self.result.stderr)
+        self.assertNotIn("Traceback", self.result.stderr)
+        self.assertNotIn("TypeError", self.result.stderr)
+        self.assertNotIn("AttributeError", self.result.stderr)
+
+    def test_router_written_with_all_refs(self):
+        self.assertTrue(self.skill_path.exists(), "router not written on null-priority plan")
+        linked = set(re.findall(r"refs/([A-Za-z0-9._\-]+\.md)", self.skill_text))
+        # All three plan articles must be linked despite their null/missing
+        # priority + null slug. (The template may also emit static fallback refs
+        # like `onboard.md` in the quick-ref when artifacts are sparse, so this is
+        # a subset check, not exact-set equality.)
+        self.assertTrue(
+            {"overview.md", "arch.md", "cap-x.md"} <= linked,
+            f"a plan article ref is missing from the router: {linked}",
+        )
+
+
 class TestBackstopEndToEnd(unittest.TestCase):
     """Drive the real assembler on a >8-article plan as a subprocess."""
 
