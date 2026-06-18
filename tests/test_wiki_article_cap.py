@@ -16,8 +16,10 @@ covers the deterministic scaffolding that makes the unattended path safe:
      and writes the router with no stdin / no human prompt;
   b) the backstop TRIMS a pathological count down to the cap, dropping only
      capability/concept-explanation articles, lowest-priority-first;
-  c) always-on (product-overview, onboarding-maintainer) and structural
-     (architecture, api, domain, runbook) articles are NEVER auto-dropped;
+  c) always-on (product-overview, onboarding-maintainer) and ALL structural
+     types (architecture-overview, api-reference, domain-reference,
+     design-pattern, runbook, agent-roster) are NEVER auto-dropped — every one
+     of the 8 non-trimmable types is exercised by the fixture, not just 4;
   d) the trim report enumerates `trimmed_canonical_ids` so the reviewer / the
      `broken_reference` lint can reconcile surviving `## See also` rows — and
      the assembled router's Load guide contains NO link to a trimmed ref
@@ -45,8 +47,22 @@ def _load_cap_module():
     return _support.load_module(ASSEMBLE, "assemble_wiki_skill_under_test")
 
 
-# --- A pathological plan: 11 articles, 7 of them trimmable cap-*/concept-* ---
-# 4 non-trimmable (overview, onboard, arch, api) + 5 capability + 2 concept = 11.
+# --- A pathological plan: 15 articles, 7 of them trimmable cap-*/concept-* ---
+# 8 NON-TRIMMABLE — all 8 non-trimmable types, so "structural never dropped" is
+# exercised by execution for every one of them (codereview LOW: the fixture
+# previously carried only 4 of the 8, leaving runbook / domain-reference /
+# design-pattern / agent-roster proven safe only by the hardcoded
+# TRIMMABLE_TYPES tuple, never by a real plan running through the backstop):
+#   product-overview, onboarding-maintainer (always-on)
+#   architecture-overview, api-reference, domain-reference, design-pattern,
+#   runbook, agent-roster (structural)
+# + 5 capability + 2 concept = 15 trimmable-heavy total.
+#
+# Priorities are laid out non-trimmable-first (1..8) then trimmable (9..15) so
+# the backstop, which drops lowest-priority-first, takes trimmable articles
+# before it could ever reach a structural one — and a cap that bites only a few
+# (TestBackstopEndToEnd uses 12) still drops a strict subset of trimmable,
+# keeping the "lowest-priority-first" ordering meaningful.
 def _pathological_plan():
     articles = [
         {"type": "product-overview", "slug": "big-repo-overview",
@@ -66,13 +82,30 @@ def _pathological_plan():
          "ref_file": "api.md", "title": "API Reference",
          "audience": "both", "priority": 4, "source_artifacts": ["technical.md"],
          "subject": "", "canonical_for": ["BIG-REPO-API"]},
+        {"type": "domain-reference", "slug": "big-repo-domain-reference",
+         "ref_file": "domain.md", "title": "Domain Reference",
+         "audience": "maintainer", "priority": 5, "source_artifacts": ["domain.md"],
+         "subject": "", "canonical_for": ["BIG-REPO-DOMAIN"]},
+        {"type": "design-pattern", "slug": "big-repo-repository-pattern",
+         "ref_file": "pattern-repository.md", "title": "Pattern: Repository",
+         "audience": "maintainer", "priority": 6,
+         "source_artifacts": ["architecture.md"], "subject": "repository",
+         "canonical_for": ["BIG-REPO-PATTERN-REPOSITORY"]},
+        {"type": "runbook", "slug": "big-repo-migrate-runbook",
+         "ref_file": "runbook-migrate.md", "title": "Runbook: Run Migrations",
+         "audience": "maintainer", "priority": 7, "source_artifacts": ["ops.md"],
+         "subject": "migrate", "canonical_for": ["BIG-REPO-RB-MIGRATE"]},
+        {"type": "agent-roster", "slug": "big-repo-agent-roster",
+         "ref_file": "agents.md", "title": "Agent & Skill Roster",
+         "audience": "maintainer", "priority": 8, "source_artifacts": ["survey.md"],
+         "subject": "", "canonical_for": ["BIG-REPO-AGENTS"]},
     ]
-    # 5 capabilities (priority 5..9) + 2 concepts (priority 10..11) — trimmable.
+    # 5 capabilities (priority 9..13) + 2 concepts (priority 14..15) — trimmable.
     for i, feat in enumerate(["charge", "refund", "payout", "dispute", "settle"]):
         articles.append({
             "type": "capability", "slug": f"big-repo-cap-{feat}",
             "ref_file": f"cap-{feat}.md", "title": f"Capability: {feat.title()}",
-            "audience": "both", "priority": 5 + i,
+            "audience": "both", "priority": 9 + i,
             "source_artifacts": ["domain.md"], "subject": feat,
             "canonical_for": [f"BIG-REPO-CAP-{feat.upper()}"],
         })
@@ -80,7 +113,7 @@ def _pathological_plan():
         articles.append({
             "type": "concept-explanation", "slug": f"big-repo-concept-{term}",
             "ref_file": f"concept-{term}.md", "title": f'Concept: {term.title()}',
-            "audience": "both", "priority": 10 + j,
+            "audience": "both", "priority": 14 + j,
             "source_artifacts": ["domain.md"], "subject": term,
             "canonical_for": [f"BIG-REPO-CONCEPT-{term.upper()}"],
         })
@@ -90,9 +123,14 @@ def _pathological_plan():
     }
 
 
+# Every NON-TRIMMABLE article type — 2 always-on + 6 structural = 8 of the 10
+# types (the other 2, capability + concept-explanation, are TRIMMABLE_TYPES).
+# The fixture above includes one article of each, so "structural never dropped"
+# is now proven by execution for all 8, not just the original 4.
 ALWAYS_ON_AND_STRUCTURAL = {
     "product-overview", "onboarding-maintainer",
     "architecture-overview", "api-reference",
+    "domain-reference", "design-pattern", "runbook", "agent-roster",
 }
 
 
@@ -107,7 +145,7 @@ class TestCapArticlesUnit(unittest.TestCase):
         articles = _pathological_plan()["articles"]
         kept, trimmed = self.mod.cap_articles(articles, 8)
         self.assertEqual(len(kept), 8, "did not cap to --max-articles=8")
-        self.assertEqual(len(trimmed), 3, "expected exactly 3 trimmed (11 → 8)")
+        self.assertEqual(len(trimmed), 7, "expected exactly 7 trimmed (15 → 8)")
         # Only capability/concept-explanation may be dropped.
         for art in trimmed:
             self.assertIn(
@@ -123,14 +161,22 @@ class TestCapArticlesUnit(unittest.TestCase):
             self.assertIn(t, kept_types, f"{t} was wrongly dropped by the backstop")
 
     def test_drops_lowest_priority_first(self):
-        # priorities 10 (concept idempotency) and 11 (concept ledger) plus the
-        # next-lowest capability (priority 9, dispute) are the 3 worst → dropped.
+        # Cap 12 over the 15-article plan drops the 3 worst by priority: the two
+        # concepts (15 ledger, 14 idempotency) and the lowest capability
+        # (13 settle) — a strict subset of the trimmable set, so this still proves
+        # "lowest-priority-first" without forcing every trimmable out.
         articles = _pathological_plan()["articles"]
-        kept, trimmed = self.mod.cap_articles(articles, 8)
+        kept, trimmed = self.mod.cap_articles(articles, 12)
         trimmed_prio = sorted(a["priority"] for a in trimmed)
         self.assertEqual(
-            trimmed_prio, [9, 10, 11],
+            trimmed_prio, [13, 14, 15],
             f"expected the 3 lowest priorities dropped; got {trimmed_prio}",
+        )
+        # And every survivor in the structural floor is still present.
+        kept_types = {a["type"] for a in kept}
+        self.assertTrue(
+            ALWAYS_ON_AND_STRUCTURAL <= kept_types,
+            "a structural article was dropped before the trimmable set was exhausted",
         )
 
     def test_within_cap_is_noop(self):
@@ -146,15 +192,16 @@ class TestCapArticlesUnit(unittest.TestCase):
         self.assertEqual(trimmed, [])
 
     def test_never_drops_below_non_trimmable_floor(self):
-        # max smaller than the non-trimmable count: keep all 4 non-trimmable +
-        # nothing more is droppable past removing every cap/concept article.
+        # max (2) smaller than the non-trimmable count (8): keep all 8
+        # non-trimmable + nothing more is droppable past removing every
+        # cap/concept article. Overflow above the cap is preserved, not dropped.
         articles = _pathological_plan()["articles"]
         kept, trimmed = self.mod.cap_articles(articles, 2)
         kept_types = {a["type"] for a in kept}
         for t in ALWAYS_ON_AND_STRUCTURAL:
             self.assertIn(t, kept_types, "non-trimmable floor was violated")
-        # All 7 trimmable were dropped; the 4 non-trimmable remain.
-        self.assertEqual(len(kept), 4)
+        # All 7 trimmable were dropped; the 8 non-trimmable remain.
+        self.assertEqual(len(kept), 8)
         self.assertEqual(len(trimmed), 7)
 
 
@@ -368,11 +415,11 @@ class TestBackstopEndToEnd(unittest.TestCase):
         # (d) the report enumerates trimmed canonical IDs so See-also can be fixed.
         self.assertIsNotNone(self.report, "no trim-report.json written on a >8 plan")
         self.assertEqual(self.report["capped_at"], 8)
-        self.assertEqual(self.report["original_count"], 11)
+        self.assertEqual(self.report["original_count"], 15)
         self.assertEqual(self.report["kept_count"], 8)
-        self.assertEqual(self.report["trimmed_count"], 3)
+        self.assertEqual(self.report["trimmed_count"], 7)
         ids = self.report["trimmed_canonical_ids"]
-        self.assertEqual(len(ids), 3)
+        self.assertEqual(len(ids), 7)
         # Every trimmed ID is a CAP-/CONCEPT- id (never a structural/always-on one).
         for cid in ids:
             self.assertRegex(
@@ -396,6 +443,30 @@ class TestBackstopEndToEnd(unittest.TestCase):
         self.assertEqual(
             len(linked), 8,
             f"router should link the 8 kept articles, linked {len(linked)}: {linked}",
+        )
+
+    def test_all_non_trimmable_types_survive_into_router(self):
+        # The codereview LOW this commit closes: drive ALL 8 non-trimmable types
+        # through the REAL assembler and prove every one survives the backstop
+        # into the router — not just the original 4. With 15 articles capped at 8,
+        # the 7 trimmable are dropped and exactly the 8 non-trimmable remain, so
+        # each of their refs (incl. domain.md, agents.md, pattern-*, runbook-*)
+        # must appear in the Load guide.
+        linked = set(re.findall(r"refs/([A-Za-z0-9._\-]+\.md)", self.skill_text))
+        non_trimmable_refs = {
+            a["ref_file"]
+            for a in _pathological_plan()["articles"]
+            if a["type"] in ALWAYS_ON_AND_STRUCTURAL
+        }
+        # Sanity: the fixture really does carry all 8 non-trimmable types.
+        self.assertEqual(
+            len(non_trimmable_refs), len(ALWAYS_ON_AND_STRUCTURAL),
+            "fixture must contribute one ref per non-trimmable type",
+        )
+        missing = non_trimmable_refs - linked
+        self.assertEqual(
+            missing, set(),
+            f"a non-trimmable article was dropped from the router: {missing}",
         )
 
     def test_backstop_announced_on_stderr(self):
@@ -591,9 +662,9 @@ class TestBackstopDisabled(unittest.TestCase):
             self.report_path.exists(),
             "trim report written even though backstop was disabled (max=0)",
         )
-        # All 11 articles' refs present.
+        # All 15 articles' refs present.
         linked = set(re.findall(r"refs/([A-Za-z0-9._\-]+\.md)", self.skill_text))
-        self.assertEqual(len(linked), 11, f"expected all 11 refs linked, got {len(linked)}")
+        self.assertEqual(len(linked), 15, f"expected all 15 refs linked, got {len(linked)}")
 
 
 if __name__ == "__main__":
